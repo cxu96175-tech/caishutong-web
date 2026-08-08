@@ -1,0 +1,9 @@
+.DS_Store
+.pnpm-store/
+.wrangler/
+node_modules/
+dist/
+universal-clients/web/dist/
+universal-clients/web/*.jpg
+universal-clients/web/*.png
+universal-clients/web/design-qa.md
