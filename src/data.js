@@ -1,6 +1,29 @@
 const UPSTREAM_API = 'https://lottery-official-data.cxu96175.workers.dev'
 const isLocalPreview = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)
 export const API = isLocalPreview ? UPSTREAM_API : '/api'
+const recordsCacheKey = 'caiyan-records-cache-v1'
+const recordsCacheLifetime = 6 * 60 * 60 * 1000
+
+export function readRecordsCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(recordsCacheKey) || 'null')
+    if (!cached?.records?.length || Date.now() - Number(cached.savedAt || 0) > recordsCacheLifetime) return null
+    return cached
+  } catch { return null }
+}
+
+export function writeRecordsCache(records) {
+  try { localStorage.setItem(recordsCacheKey, JSON.stringify({ records, savedAt:Date.now() })) } catch {}
+}
+
+export function shouldRefreshRecords(cached) {
+  if (!cached?.records?.length || !cached?.savedAt) return true
+  const now = new Date()
+  const refreshAt = new Date(now)
+  refreshAt.setHours(21, 35, 0, 0)
+  // 每日开奖结束后仅自动更新一次；其余时间沿用已有结果。
+  return now >= refreshAt && Number(cached.savedAt) < refreshAt.getTime()
+}
 
 export const games = {
   fc3d: { code: 'fcsd', name: '福彩3D', red: 3, blue: 0, time: '21:15', single: true, icon: '3D' },
@@ -19,7 +42,7 @@ export const rules = [
   { key: 'ssq', name: '双色球', hint: '6 个 01—33 红球 + 1 个 01—16 蓝球', groups: [{ min: 1, max: 33, count: 6 }, { min: 1, max: 16, count: 1, accent: true }] },
   { key: 'dlt', name: '大乐透', hint: '5 个 01—35 前区 + 2 个 01—12 后区', groups: [{ min: 1, max: 35, count: 5 }, { min: 1, max: 12, count: 2, accent: true }] },
   { key: 'fc3d', name: '福彩3D', hint: '3 位 0—9 数字', grouped: true, groups: [{ min: 0, max: 9, count: 3, repeatable: true }] },
-  { key: 'kl8', name: '快乐8', hint: '10 个 01—80 数字', groups: [{ min: 1, max: 80, count: 10 }] },
+  { key: 'kl8', name: '快乐8', hint: '每注选择 1—10 个 01—80 数字', pickCountOptions: Array.from({ length:10 }, (_, index) => index + 1), groups: [{ min: 1, max: 80, count: 10 }] },
   { key: 'pl3', name: '排列3', hint: '3 位 0—9 数字', grouped: true, groups: [{ min: 0, max: 9, count: 3, repeatable: true }] },
   { key: 'pl5', name: '排列5', hint: '5 位 0—9 数字，可重复', groups: [{ min: 0, max: 9, count: 5, repeatable: true }] },
   { key: 'qlc', name: '七乐彩', hint: '7 个 01—30 数字', groups: [{ min: 1, max: 30, count: 7 }] },
@@ -70,5 +93,6 @@ export async function fetchRecords(limit = 50) {
   }))
   const all = results.flatMap(x => x.status === 'fulfilled' ? x.value : [])
   if (!all.length) throw new Error('开奖数据暂时不可用')
+  writeRecordsCache(all)
   return all
 }

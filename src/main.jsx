@@ -1,10 +1,29 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { Home, Dices, Bookmark, RefreshCw, ChevronRight, ChevronDown, Trash2, ArrowLeft, TrendingUp, UserRound, Smartphone, Crown, Download, Settings, ShieldCheck, HelpCircle, Info, LogOut, TableProperties, Clock3, Send, FileText, Database, Mail } from 'lucide-react'
-import { fetchRecords, gameOrder, generate, games, rules } from './data'
+import { Home, Dices, Bookmark, RefreshCw, ChevronRight, ChevronDown, Trash2, ArrowLeft, TrendingUp, UserRound, Smartphone, Crown, Download, Settings, ShieldCheck, HelpCircle, Info, LogOut, TableProperties, Clock3, Send, FileText, Database, Mail, Eye, MousePointerClick, Users, Activity, LayoutDashboard } from 'lucide-react'
+import { fetchRecords, gameOrder, generate, games, readRecordsCache, rules, shouldRefreshRecords } from './data'
+import { playRules } from './playRules'
+import packageMetadata from '../package.json'
 import './styles.css'
 
 const storageKey = 'caishutong-plans'
+const navigationStorageKey = 'caishutong-navigation-state'
+const readNavigationState = () => {
+  try {
+    if (new URLSearchParams(location.search).get('nav') !== '1') return null
+    return JSON.parse(sessionStorage.getItem(navigationStorageKey) || 'null')
+  } catch { return null }
+}
+const analyticsVisitorKey = 'caishutong-anonymous-visitor'
+const analyticsSessionKey = 'caishutong-anonymous-session'
+const anonymousId = (storage,key) => {
+  try { let value = storage.getItem(key); if (!value) { value = crypto.randomUUID(); storage.setItem(key,value) } return value } catch { return crypto.randomUUID() }
+}
+function trackAnalytics(event, details = {}) {
+  if (location.pathname.startsWith('/admin')) return
+  const body = JSON.stringify({ event, page:details.page || '', game:details.game || '', visitorId:anonymousId(localStorage,analyticsVisitorKey), sessionId:anonymousId(sessionStorage,analyticsSessionKey) })
+  fetch('/api/analytics',{ method:'POST', headers:{'Content-Type':'application/json'}, body, keepalive:true }).catch(() => {})
+}
 const Balls = ({ groups, small = false }) => {
   const visible = groups.filter(group => group.values?.length)
   return <div className={`balls ${small ? 'small' : ''}`}>{visible.map((g, i) => <React.Fragment key={i}>{i > 0 && <span className="plus">+</span>}{g.values.map((n, j) => <span className={`ball ${g.accent ? 'blue' : 'red'}`} key={j}>{n}</span>)}</React.Fragment>)}</div>
@@ -17,29 +36,34 @@ const PlanEntryLabel = ({ text, fallback }) => {
   return <em className={visibleDetails.length ? 'stacked-label' : ''}><span>{kind}</span>{visibleDetails.length > 0 && <span>{visibleDetails.join(' · ')}</span>}</em>
 }
 
-function HomePage({ open, openTrend }) {
-  const [all, setAll] = useState([]), [loading, setLoading] = useState(true), [error, setError] = useState(''), [stamp, setStamp] = useState('')
-  const load = async () => { setLoading(true); setError(''); try { const rows = await fetchRecords(); setAll(rows); setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) } catch (e) { setError(e.message) } finally { setLoading(false) } }
-  useEffect(() => { load() }, [])
+function HomePage({ open, openTrend, openHistory, openRules }) {
+  const cached = useMemo(() => readRecordsCache(), [])
+  const [all, setAll] = useState(() => cached?.records || []), [loading, setLoading] = useState(() => !cached?.records?.length), [error, setError] = useState(''), [stamp, setStamp] = useState(() => cached?.savedAt ? new Date(cached.savedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '')
+  const load = async () => { setLoading(true); setError(''); try { const rows = await fetchRecords(120); setAll(rows); setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) } catch (e) { if (!all.length) setError(e.message) } finally { setLoading(false) } }
+  useEffect(() => { if (shouldRefreshRecords(cached)) load() }, [])
   const latest = gameOrder.map(g => all.find(r => r.game === g)).filter(Boolean)
-  return <main><div className="section-head"><div><h1>最新开奖</h1><p>覆盖福彩与体彩常用数字游戏</p></div><button className="icon-btn" onClick={load} aria-label="刷新"><RefreshCw size={20} className={loading ? 'spin' : ''}/></button></div>
-    {stamp && <div className="updated">更新于 {stamp}</div>}
-    {loading && !latest.length ? <div className="cards">{[1,2,3].map(i => <div className="card skeleton" key={i}/>)}</div> : error ? <div className="state"><b>加载失败</b><p>{error}</p><button onClick={load}>重新加载</button></div> : <div className="cards">{latest.map(r => <article className="card result-card" onClick={() => open(r, all)} key={r.id}>
+  return <main><div className="section-head home-section-head"><div className="home-refresh">{stamp && <span>更新于 {stamp}</span>}<button className="icon-btn" onClick={load} aria-label="刷新"><RefreshCw size={14} className={loading ? 'spin' : ''}/></button></div></div>
+    {loading && !latest.length ? <div className="cards">{[1,2,3].map(i => <div className="card skeleton" key={i}/>)}</div> : error ? <div className="state"><b>加载失败</b><p>{error}</p><button onClick={load}>重新加载</button></div> : <div className="cards">{latest.map(r => <article className="card result-card" key={r.id}>
       <header><div className="game"><span className={`game-icon ${r.game}`}>{r.icon}</span><div><h2>{r.name}</h2><p>第 {r.issue} 期</p></div></div><div className="date">{r.drawDate}<small>{r.drawTime} 开奖</small></div></header>
       <Balls groups={[{ values: r.redBalls }, { values: r.blueBalls, accent: true }]}/>
-      <div className="stats"><span>一等奖<b>{r.firstPrizeText}</b></span><span>本期销量<b>{r.saleAmountText}</b></span></div>
-      <div className="pool"><span>奖池累计 {r.poolAmountText}</span><span className="card-links"><button onClick={event => { event.stopPropagation(); openTrend(r, all) }}><TrendingUp size={15}/> 走势图</button><span className="link">详情 <ChevronRight size={16}/></span></span></div>
+      <div className="home-card-actions" aria-label={`${r.name}快捷入口`}>
+        <button onClick={() => openRules(r, all)}><span>玩法规则</span></button>
+        <button onClick={() => openHistory(r, all)}><span>历史开奖</span></button>
+        <button onClick={() => openTrend(r, all)}><span>走势图</span></button>
+        <button onClick={() => open(r, all)}><span>详情</span></button>
+      </div>
     </article>)}</div>}<p className="notice">数据仅供参考 · 请以官方开奖结果为准</p></main>
 }
 
 const positionNames = ['百位','十位','个位','第四位','第五位','第六位','特别号']
+const sevenStarPositionNames = ['第一位','第二位','第三位','第四位','第五位','第六位','第七位']
 function getTrendGroups(game) {
   const rule = rules.find(item => item.key === game) || rules[0]
   const groups = rule.groups.flatMap((group, groupIndex) => {
     const values = Array.from({ length: group.max - group.min + 1 }, (_, index) => group.min === 0 ? String(index) : String(group.min + index).padStart(2,'0'))
     if (group.repeatable && group.count > 1 && group.max === 9) {
       return Array.from({ length: group.count }, (_, position) => ({
-        key: `${groupIndex}-${position}`, title: positionNames[position] || `第${position + 1}位`, values, count: 1,
+        key: `${groupIndex}-${position}`, title: game === 'qxc' ? sevenStarPositionNames[position] : (positionNames[position] || `第${position + 1}位`), values, count: 1,
         accent: position % 2 === 1, pick: record => [String((groupIndex ? record.blueBalls : record.redBalls)[position] ?? '')]
       }))
     }
@@ -85,8 +109,26 @@ function getTrendStats(game, record) {
 }
 
 const detailMetricColors = ['#6557df','#9250e8','#ff754b','#ff9f2f','#f3df22','#7ee590']
-function DrawMetrics({ game, record }) {
-  if (!['fc3d','pl3','pl5'].includes(game)) return null
+function DrawMetrics({ game, record, previousRecord }) {
+  if (!['fc3d','pl3','pl5','dlt'].includes(game)) return null
+  if (game === 'dlt') {
+    const front = record.redBalls.map(Number).sort((a,b) => a-b)
+    const previous = new Set((previousRecord?.redBalls || []).map(Number))
+    const tails = new Map()
+    front.forEach(value => tails.set(value % 10,(tails.get(value % 10) || 0) + 1))
+    let consecutiveGroups = 0
+    front.forEach((value,index) => { if (index > 0 && value === front[index - 1] + 1 && (index === 1 || front[index - 1] !== front[index - 2] + 1)) consecutiveGroups += 1 })
+    const dltStats = {
+      oddEven:`${front.filter(value => value % 2).length}:${front.filter(value => value % 2 === 0).length}`,
+      sum:front.reduce((total,value) => total + value,0),
+      repeats:front.filter(value => previous.has(value)).length,
+      consecutive:consecutiveGroups,
+      sameTail:[...tails.values()].filter(count => count > 1).length,
+      range:front.length ? Math.max(...front) - Math.min(...front) : '--'
+    }
+    const metrics = [['oddEven','前区奇偶比'],['sum','前区和值'],['repeats','与上期同号'],['consecutive','连号'],['sameTail','同尾'],['range','极距']]
+    return <section className="card draw-metrics" aria-label="大乐透本期号码指标">{metrics.map(([key,label],index) => <div className="draw-metric" style={{'--metric-color':detailMetricColors[index]}} key={key}><i/><span><b>{dltStats[key]}</b><small>{label}</small></span></div>)}</section>
+  }
   const stats = getTrendStats(game, record)
   const metrics = [
     ['shape','形态'], ['sum','和值'], ['span','跨度'], ['oddEven','奇偶比'], ['bigSmall','大小比'],
@@ -100,13 +142,17 @@ function TraditionalTrendTable({ game, history, save }) {
   const [period, setPeriod] = useState(30)
   const [simulation, setSimulation] = useState({})
   const [multiplier, setMultiplier] = useState(1)
+  const [showPatterns, setShowPatterns] = useState(true)
+  const [showMisses, setShowMisses] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const rows = useMemo(() => history.slice(0, period).reverse(), [history, period])
   const groups = useMemo(() => getTrendGroups(game), [game])
   const statColumns = trendStatColumns[game] || []
-  const showLines = ['fc3d', 'pl3', 'pl5', 'ssq'].includes(game)
-  const cell = 28, rowHeight = 34, issueWidth = 78, headerHeight = 64
+  const showLines = ['fc3d', 'pl3', 'pl5', 'ssq', 'qxc'].includes(game)
   const totalCells = groups.reduce((sum, group) => sum + group.values.length, 0)
   const statWidth = statColumns.reduce((sum, column) => sum + column[2], 0)
+  const cell = 28
+  const rowHeight = 34, issueWidth = 78, headerHeight = 64
   const tableWidth = issueWidth + totalCells * cell + statWidth
   const rowData = useMemo(() => {
     const misses = groups.map(group => Object.fromEntries(group.values.map(value => [value, 0])))
@@ -116,6 +162,26 @@ function TraditionalTrendTable({ game, history, save }) {
       return { hits, values }
     }) }))
   }, [rows, groups, game])
+  const patternHits = useMemo(() => {
+    if (!['ssq','dlt'].includes(game)) return new Set()
+    const marked = new Set()
+    const directions = [[0,1],[1,0],[1,1],[1,-1]]
+    groups.forEach((group,groupIndex) => {
+      const isHit = (rowIndex,valueIndex) => Boolean(rowData[rowIndex]?.groups[groupIndex]?.values[valueIndex]?.hit)
+      rowData.forEach((row,rowIndex) => group.values.forEach((value,valueIndex) => {
+        if (!isHit(rowIndex,valueIndex)) return
+        directions.forEach(([rowStep,valueStep]) => {
+          if (isHit(rowIndex - rowStep,valueIndex - valueStep)) return
+          const run = []
+          let nextRow = rowIndex, nextValue = valueIndex
+          while (isHit(nextRow,nextValue)) { run.push(`${groupIndex}:${nextRow}:${nextValue}`); nextRow += rowStep; nextValue += valueStep }
+          if (run.length >= 3) run.forEach(key => marked.add(key))
+        })
+      }))
+    })
+    rowData.forEach((row,rowIndex) => row.groups.forEach((group,groupIndex) => group.values.forEach((cellData,valueIndex) => { cellData.patternHit = marked.has(`${groupIndex}:${rowIndex}:${valueIndex}`) })))
+    return marked
+  }, [game,groups,rowData])
   const lines = useMemo(() => {
     let offset = 0
     return groups.flatMap((group, groupIndex) => {
@@ -124,9 +190,10 @@ function TraditionalTrendTable({ game, history, save }) {
           const hits = row.groups[groupIndex].hits.slice().sort((a,b) => +a - +b)
           const value = hits[seriesIndex]
           const valueIndex = group.values.indexOf(value)
-          return valueIndex < 0 ? null : `${offset + valueIndex * cell + cell / 2},${rowIndex * rowHeight + rowHeight / 2}`
-        }).filter(Boolean)
-        return { points: points.join(' '), color: '#A0A0A0', accent: Boolean(group.accent), distribution: Boolean(group.distribution) }
+          return valueIndex < 0 ? null : { x:offset + valueIndex * cell + cell / 2, y:rowIndex * rowHeight + rowHeight / 2 }
+        })
+        const segments = points.slice(0,-1).flatMap((point,index) => point && points[index + 1] ? [{ from:point, to:points[index + 1] }] : [])
+        return { segments, color:'#A0A0A0', accent:Boolean(group.accent), distribution:Boolean(group.distribution) }
       })
       offset += group.values.length * cell
       return series
@@ -162,26 +229,198 @@ function TraditionalTrendTable({ game, history, save }) {
     const groups = selectableGroups.map(group => ({ values: simulation[group.key] || [], accent: group.accent }))
     save({ id:String(Date.now()), planName:`${games[game]?.name || game} · 走势模拟`, createdAt:new Date().toLocaleString('zh-CN'), entries:[{ id:`${Date.now()}-simulation`, sourceLabel:'模拟', groups }] })
   }
+  const drawExportLines = (canvas,targetWidth,targetHeight) => {
+    const context = canvas.getContext('2d')
+    const scaleX = canvas.width / targetWidth, scaleY = canvas.height / targetHeight
+    context.save()
+    context.setTransform(1,0,0,1,0,0)
+    context.lineWidth = 1.6 * Math.min(scaleX,scaleY)
+    context.lineCap = 'round'
+    context.strokeStyle = '#A0A0A0'
+    context.globalAlpha = .85
+    lines.forEach(line => {
+      if (line.distribution || (game === 'ssq' && !line.accent)) return
+      line.segments.forEach(segment => {
+        context.beginPath()
+        context.moveTo((issueWidth + segment.from.x) * scaleX,(headerHeight + segment.from.y) * scaleY)
+        context.lineTo((issueWidth + segment.to.x) * scaleX,(headerHeight + segment.to.y) * scaleY)
+        context.stroke()
+      })
+    })
+    context.globalAlpha = 1
+    const groupOffsets = groups.map((group,index) => groups.slice(0,index).reduce((sum,item) => sum + item.values.length * cell,0))
+    rowData.forEach((row,rowIndex) => row.groups.forEach((rowGroup,groupIndex) => {
+      const group = groups[groupIndex]
+      rowGroup.values.forEach((cellData,valueIndex) => {
+        if (!cellData.hit) return
+        const centerX = (issueWidth + groupOffsets[groupIndex] + valueIndex * cell + cell / 2) * scaleX
+        const centerY = (headerHeight + rowIndex * rowHeight + rowHeight / 2) * scaleY
+        const radius = 12.5 * Math.min(scaleX,scaleY)
+        const pattern = showPatterns && cellData.patternHit
+        context.beginPath()
+        context.arc(centerX,centerY,radius,0,Math.PI*2)
+        context.fillStyle = pattern ? '#844FE4' : group.distribution ? (cellData.hitCount > 1 ? '#FF9F43' : '#6687F5') : group.accent ? '#3E7BE9' : '#FF5066'
+        context.fill()
+        context.fillStyle = '#FFFFFF'
+        context.font = `900 ${12 * Math.min(scaleX,scaleY)}px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif`
+        context.textAlign = 'center'
+        context.textBaseline = 'middle'
+        context.fillText(cellData.value,centerX,centerY + .25 * scaleY)
+      })
+    }))
+    context.restore()
+  }
+  const exportHighResolution = async () => {
+    const target = document.getElementById(`trend-export-${game}`)
+    if (!target || exporting) return
+    const scroller = target.closest('.trend-scroll')
+    const previousScrollLeft = scroller?.scrollLeft || 0
+    setExporting(true)
+    try {
+      if (scroller) scroller.scrollLeft = 0
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      await document.fonts?.ready
+      const { default:html2canvas } = await import('html2canvas')
+      const targetWidth = target.scrollWidth, targetHeight = target.scrollHeight
+      let canvas = await html2canvas(target,{ backgroundColor:'#ffffff', scale:3, useCORS:true, logging:false, width:targetWidth, height:targetHeight, windowWidth:targetWidth, windowHeight:targetHeight, scrollX:0, scrollY:0, onclone:clonedDocument => {
+        const cloneTarget = clonedDocument.getElementById(`trend-export-${game}`)
+        if (!cloneTarget) return
+        const cloneScroller = cloneTarget.closest('.trend-scroll')
+        if (cloneScroller) { cloneScroller.scrollLeft = 0; cloneScroller.style.overflow = 'visible' }
+        cloneTarget.querySelectorAll('.trend-issue').forEach(element => { element.style.position = 'relative'; element.style.left = '0' })
+        cloneTarget.querySelectorAll('.trend-lines').forEach(element => { element.style.display = 'none' })
+      } })
+      if (!['dlt','kl8'].includes(game)) drawExportLines(canvas,targetWidth,targetHeight)
+      canvas = await appendExportWatermark(canvas)
+      const link = document.createElement('a')
+      link.download = `${games[game]?.name || game}-基础走势图-${rows.length}期.png`
+      link.href = canvas.toDataURL('image/png',1)
+      link.click()
+      trackAnalytics('export_chart',{ page:'trend', game })
+    } finally { if (scroller) scroller.scrollLeft = previousScrollLeft; setExporting(false) }
+  }
   const summaryHeight = summaryRows.length * 30
-  const canvasHeight = headerHeight + rows.length * rowHeight + summaryHeight
+  const simulatorHeight = 56
+  const canvasHeight = headerHeight + rows.length * rowHeight + simulatorHeight + summaryHeight
   let boundaryOffset = 0
   const groupBoundaries = groups.slice(0, -1).map(group => { boundaryOffset += group.values.length * cell; return issueWidth + boundaryOffset })
-  return <section className={`card classic-trend trend-fold-card ${expanded ? 'expanded' : ''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><TableProperties size={18}/><b>基础走势图</b><small>近 {rows.length} 期 · 号码走势与遗漏统计</small></span><ChevronDown size={20}/></button>
-    {expanded && <><div className="trend-fold-controls"><span>横向滑动查看更多号码</span><label className="period-filter"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div>
-    <div className="trend-scroll"><div className="trend-canvas" style={{ width: tableWidth, height: canvasHeight }}>
+  return <section className={`card classic-trend trend-fold-card ${expanded ? 'expanded' : ''} ${showPatterns ? 'show-pattern-hits' : ''}`} style={{ '--trend-table-width':`${tableWidth}px` }}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><TableProperties size={18}/><b>基础走势图</b><small>近 {rows.length} 期 · 号码走势与遗漏统计</small></span><ChevronDown size={20}/></button>
+    {expanded && <><div className="trend-fold-controls"><span>横向滑动查看更多号码</span><div className="trend-filter-actions"><label className="pattern-filter"><input type="checkbox" checked={showMisses} onChange={event => setShowMisses(event.target.checked)}/><i/><span>遗漏值</span></label>{['ssq','dlt'].includes(game) && <label className="pattern-filter"><input type="checkbox" checked={showPatterns} onChange={event => setShowPatterns(event.target.checked)}/><i/><span>连号标记</span></label>}<button className="trend-export-button" disabled={exporting} onClick={exportHighResolution}><Download size={15}/>{exporting ? '生成中…' : '导出高清图'}</button><label className="period-filter"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div></div>
+    <div className="trend-scroll"><div className="trend-canvas" id={`trend-export-${game}`} style={{ width: tableWidth, height: canvasHeight, '--trend-cell-size':`${cell}px` }}>
       <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
       <div className="trend-number-head" style={{ left: issueWidth, width: totalCells * cell, height: 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
-      {showLines && <svg className="trend-lines" style={{ left: issueWidth, top: headerHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.map((line,index) => line.points && !line.distribution && (game !== 'ssq' || line.accent) && <polyline key={index} points={line.points} fill="none" stroke={line.color} strokeWidth="1.6" strokeLinejoin="round" strokeLinecap="round" opacity=".85"/>)}</svg>}
+      {showLines && game !== 'kl8' && <svg className="trend-lines" data-line-renderer="segments-v3" preserveAspectRatio="none" style={{ left:issueWidth, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => !line.distribution && (game !== 'ssq' || line.accent) ? line.segments.map((segment,segmentIndex) => <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={line.color} strokeWidth="1.6" strokeLinecap="round" opacity=".85"/>) : [])}</svg>}
       {groupBoundaries.map((left, index) => <span className="trend-group-divider" style={{ left, height:canvasHeight }} key={index}/>) }
-      <div className="trend-body" style={{ top: headerHeight }}>{rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}><div className="trend-issue" style={{ width: issueWidth }}>{record.issue}</div>{rowGroups.flatMap((group, groupIndex) => group.values.map(cellData => <div className={`trend-cell ${cellData.hit ? `hit ${groups[groupIndex].accent ? 'hit-blue' : ''} ${groups[groupIndex].distribution ? `distribution-hit ${cellData.hitCount > 1 ? 'repeat-hit' : ''}` : ''}` : ''}`} style={{ width: cell, height: rowHeight }} key={`${record.id}-${groupIndex}-${cellData.value}`}>{cellData.hit ? <b>{cellData.value}{groups[groupIndex].distribution && cellData.hitCount > 1 && <i>{cellData.hitCount}</i>}</b> : <span>{cellData.miss}</span>}</div>))}{statColumns.map(([key,,width]) => <div className={`trend-stat ${key === 'shape' ? `shape-${stats[key] === '豹子' ? 'baozi' : stats[key] === '组三' ? 'group3' : 'group6'}` : ''}`} style={{ width, height: rowHeight }} key={`${record.id}-${key}`}><span>{stats[key]}</span></div>)}</div>)}{summaryRows.map(summary => <div className="trend-summary-row" style={{ height:30 }} key={summary.key}><div className="trend-summary-label" style={{ width:issueWidth }}>{summary.label}</div>{summary.groups.flatMap((values, groupIndex) => values.map((value, valueIndex) => <div className="trend-summary-cell" style={{ width:cell }} key={`${summary.key}-${groupIndex}-${valueIndex}`}>{value}</div>))}<div className="trend-summary-spacer" style={{ width:statWidth }}/></div>)}</div>
-    </div><div className="trend-simulator" style={{ width:tableWidth }}><div className="trend-simulator-label" style={{ width:issueWidth }}>模拟选号</div>{groups.flatMap(group => group.values.map(value => group.distribution ? <span className="sim-placeholder" style={{ width:cell }} key={`${group.key}-${value}`}/> : <button className={(simulation[group.key] || []).includes(value) ? 'selected' : ''} style={{ width:cell }} onClick={() => chooseSimulation(group,value)} key={`${group.key}-${value}`}>{value}</button>))}<span style={{ width:statWidth }}/></div></div>
+      <div className="trend-body" style={{ top: headerHeight }}>{rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}><div className="trend-issue" style={{ width: issueWidth }}>{record.issue}</div>{rowGroups.flatMap((group, groupIndex) => group.values.map(cellData => <div className={`trend-cell ${cellData.hit ? `hit ${groups[groupIndex].accent ? 'hit-blue' : ''} ${cellData.patternHit ? 'pattern-hit' : ''} ${groups[groupIndex].distribution ? `distribution-hit ${cellData.hitCount > 1 ? 'repeat-hit' : ''}` : ''}` : ''}`} style={{ width: cell, height: rowHeight }} key={`${record.id}-${groupIndex}-${cellData.value}`}>{cellData.hit ? <b>{cellData.value}{groups[groupIndex].distribution && cellData.hitCount > 1 && <i>{cellData.hitCount}</i>}</b> : <span>{showMisses ? cellData.miss : ''}</span>}</div>))}{statColumns.map(([key,,width]) => <div className={`trend-stat ${key === 'shape' ? `shape-${stats[key] === '豹子' ? 'baozi' : stats[key] === '组三' ? 'group3' : 'group6'}` : ''}`} style={{ width, height: rowHeight }} key={`${record.id}-${key}`}><span>{stats[key]}</span></div>)}</div>)}<div className="trend-simulator" style={{ width:tableWidth }}><div className="trend-simulator-label" style={{ width:issueWidth }}>模拟选号</div>{groups.flatMap(group => group.values.map(value => group.distribution ? <span className="sim-placeholder" style={{ width:cell }} key={`${group.key}-${value}`}/> : <button className={(simulation[group.key] || []).includes(value) ? 'selected' : ''} style={{ width:cell }} onClick={() => chooseSimulation(group,value)} key={`${group.key}-${value}`}>{value}</button>))}<span style={{ width:statWidth }}/></div>{summaryRows.map(summary => <div className="trend-summary-row" style={{ height:30 }} key={summary.key}><div className="trend-summary-label" style={{ width:issueWidth }}>{summary.label}</div>{summary.groups.flatMap((values, groupIndex) => values.map((value, valueIndex) => <div className="trend-summary-cell" style={{ width:cell }} key={`${summary.key}-${groupIndex}-${valueIndex}`}>{value}</div>))}<div className="trend-summary-spacer" style={{ width:statWidth }}/></div>)}</div>
+    </div></div>
     <div className="simulation-footer"><span>已选 <b>{selectedTotal}</b> 个，共 <b>{bets}</b> 注</span><label><input type="number" min="1" max="99" value={multiplier} onChange={event => setMultiplier(Math.max(1, Math.min(99, Number(event.target.value) || 1)))}/> 倍</label><strong>{bets * multiplier * 2} 元</strong><button onClick={() => setSimulation({})}>清空选号</button><button className="save-simulation" disabled={!bets} onClick={saveSimulation}>保存方案</button></div>
     </>}
   </section>
 }
 
-function HistoryList({ history }) {
-  const [expanded, setExpanded] = useState(false)
+async function appendExportWatermark(canvas) {
+  const image = new Image()
+  image.src = '/export-watermark.png'
+  await image.decode()
+  const footerHeight = Math.round(Math.max(180,Math.min(300,canvas.width * .06)))
+  const output = document.createElement('canvas')
+  output.width = canvas.width
+  output.height = canvas.height + footerHeight
+  const context = output.getContext('2d')
+  context.drawImage(canvas,0,0)
+  context.fillStyle = '#fff'
+  context.fillRect(0,canvas.height,output.width,footerHeight)
+  const watermarkHeight = footerHeight * .72
+  const watermarkWidth = watermarkHeight * image.naturalWidth / image.naturalHeight
+  const tinted = document.createElement('canvas')
+  tinted.width = image.naturalWidth
+  tinted.height = image.naturalHeight
+  const tintedContext = tinted.getContext('2d')
+  tintedContext.drawImage(image,0,0)
+  tintedContext.globalCompositeOperation = 'source-in'
+  tintedContext.fillStyle = '#26282d'
+  tintedContext.fillRect(0,0,tinted.width,tinted.height)
+  context.drawImage(tinted,(output.width-watermarkWidth)/2,canvas.height+(footerHeight-watermarkHeight)/2,watermarkWidth,watermarkHeight)
+  return output
+}
+
+async function exportTrendElement(id, filename) {
+  const target = document.getElementById(id)
+  if (!target) return
+  await document.fonts?.ready
+  const { default:html2canvas } = await import('html2canvas')
+  const captured = await html2canvas(target,{ backgroundColor:'#fff', scale:3, useCORS:true, logging:false, width:target.scrollWidth, height:target.scrollHeight, windowWidth:target.scrollWidth, windowHeight:target.scrollHeight })
+  const canvas = await appendExportWatermark(captured)
+  const link = document.createElement('a')
+  link.download = filename
+  link.href = canvas.toDataURL('image/png',1)
+  link.click()
+}
+
+const nextLotteryIssue = issue => /^\d+$/.test(issue || '') ? String(Number(issue) + 1).padStart(issue.length,'0') : `${issue || '--'}后`
+const heatAnalysisPeriods = Array.from({ length:49 },(_,index) => index + 2)
+
+function DltHeatTrend({ history }) {
+  const [expanded,setExpanded] = useState(false), [analysis,setAnalysis] = useState(10), [period,setPeriod] = useState(30), [exporting,setExporting] = useState(false)
+  const rows = useMemo(() => {
+    const chronological = [...history].reverse(), start = Math.max(0,chronological.length - period)
+    const rank = (records,field,max,sizes) => {
+      const counts = Array(max + 1).fill(0)
+      records.forEach(record => (record[field] || []).forEach(value => { const number=Number(value); if (number >= 1 && number <= max) counts[number] += 1 }))
+      const sorted = Array.from({length:max},(_,index)=>index+1).sort((a,b)=>counts[b]-counts[a] || b-a)
+      let offset=0; return sizes.map(size => { const values=sorted.slice(offset,offset+size); offset += size; return values })
+    }
+    const actualRows = chronological.slice(start).map((record,visibleIndex) => {
+      const index=start+visibleIndex, sample=chronological.slice(Math.max(0,index-analysis),index), front=rank(sample,'redBalls',35,[12,12,11]), back=rank(sample,'blueBalls',12,[6,6]), frontHits=new Set(record.redBalls.map(Number)), backHits=new Set(record.blueBalls.map(Number))
+      return { record,front,back,frontHits,backHits,ratio:front.map(group=>group.filter(number=>frontHits.has(number)).length).join(':') }
+    })
+    const latest = chronological.at(-1)
+    if (!latest) return actualRows
+    const sample = chronological.slice(-analysis)
+    return [...actualRows,{ record:{id:'dlt-next-period',issue:nextLotteryIssue(latest.issue)}, front:rank(sample,'redBalls',35,[12,12,11]), back:rank(sample,'blueBalls',12,[6,6]), frontHits:new Set(), backHits:new Set(), ratio:'--', forecast:true }]
+  },[history,analysis,period])
+  const download = async () => { setExporting(true); try { await exportTrendElement('dlt-heat-export',`大乐透-冷热图-${analysis}期分析-${period}期.png`); trackAnalytics('export_chart',{page:'trend',game:'dlt',chart:'heat'}) } finally { setExporting(false) } }
+  const cells=(numbers,type,hits,prefix)=>numbers.map(number=><td className={`heat-number ${hits.has(number)?`hit ${type}`:''}`} key={`${prefix}-${type}-${number}`}>{String(number).padStart(2,'0')}</td>)
+  return <section className={`card trend-fold-card heat-trend-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><TrendingUp size={18}/><b>冷热图</b><small>按频次降序 · 同频号码降序</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls heat-controls"><span>每行统计该期开奖前所选期数，再标注当期奖号</span><div className="trend-filter-actions"><label className="period-filter"><span>分析</span><select value={analysis} onChange={event=>setAnalysis(Number(event.target.value))}>{heatAnalysisPeriods.map(value=><option value={value} key={value}>{value}期</option>)}</select></label><label className="period-filter"><span>显示</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[30,50,100].map(value=><option value={value} key={value}>{value}期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'导出高清图'}</button></div></div><div className="heat-table-scroll"><table className="heat-table ranked-heat-table" id="dlt-heat-export"><thead><tr><th rowSpan="2">期号</th><th colSpan="35">前区</th><th rowSpan="2">三区比</th><th colSpan="12">后区</th></tr><tr><th className="hot-label" colSpan="12">热码(12)</th><th className="warm-label" colSpan="12">温码(12)</th><th className="cold-label" colSpan="11">冷码(11)</th><th className="hot-label" colSpan="6">热码(6)</th><th className="cold-label" colSpan="6">冷码(6)</th></tr></thead><tbody>{rows.map(row=><tr className={row.forecast?'forecast-row':''} key={row.record.id}><th>{row.record.issue}</th>{cells(row.front[0],'hot',row.frontHits,'front')}{cells(row.front[1],'warm',row.frontHits,'front')}{cells(row.front[2],'cold',row.frontHits,'front')}<td className="heat-ratio">{row.ratio}</td>{cells(row.back[0],'hot',row.backHits,'back')}{cells(row.back[1],'cold',row.backHits,'back')}</tr>)}{Array.from({length:2},(_,rowIndex)=><tr className="heat-blank-row" key={`dlt-blank-${rowIndex}`}><th>&nbsp;</th>{Array.from({length:35},(_,index)=><td className="heat-number" key={`front-${index}`}/>)}<td className="heat-ratio"/>{Array.from({length:12},(_,index)=><td className="heat-number" key={`back-${index}`}/>)}</tr>)}</tbody></table></div></>}</section>
+}
+
+function SsqHeatTrend({ history }) {
+  const [expanded,setExpanded] = useState(false), [analysis,setAnalysis] = useState(10), [period,setPeriod] = useState(30), [exporting,setExporting] = useState(false)
+  const rows = useMemo(() => {
+    const chronological = [...history].reverse(), start = Math.max(0,chronological.length - period)
+    const rank = (records,field,max,sizes) => {
+      const counts = Array(max + 1).fill(0)
+      records.forEach(record => (record[field] || []).forEach(value => { const number=Number(value); if (number >= 1 && number <= max) counts[number] += 1 }))
+      const sorted = Array.from({length:max},(_,index)=>index+1).sort((a,b)=>counts[b]-counts[a] || b-a)
+      let offset=0; return sizes.map(size => { const values=sorted.slice(offset,offset+size); offset += size; return values })
+    }
+    const actualRows = chronological.slice(start).map((record,visibleIndex) => {
+      const index = start + visibleIndex
+      const sample = chronological.slice(Math.max(0,index-analysis),index)
+      const front = record.redBalls.map(Number)
+      return { record, red:rank(sample,'redBalls',33,[11,11,11]), blue:rank(sample,'blueBalls',16,[8,8]), redHits:new Set(front), blueHits:new Set(record.blueBalls.map(Number)), zoneRatio:[front.filter(value=>value<=11).length,front.filter(value=>value>=12&&value<=22).length,front.filter(value=>value>=23).length].join(':'), sum:front.reduce((total,value) => total + value,0), extreme:front.length ? Math.max(...front) - Math.min(...front) : '--' }
+    })
+    const latest = chronological.at(-1)
+    if (!latest) return actualRows
+    const nextSample = chronological.slice(-analysis)
+    return [...actualRows,{ record:{ id:'ssq-next-period',issue:nextLotteryIssue(latest.issue) }, red:rank(nextSample,'redBalls',33,[11,11,11]), blue:rank(nextSample,'blueBalls',16,[8,8]), redHits:new Set(), blueHits:new Set(), zoneRatio:'--', sum:'--', extreme:'--', forecast:true }]
+  },[history,analysis,period])
+  const cells=(numbers,type,hits,prefix)=>numbers.map(number=><td className={`heat-number ${hits.has(number)?`hit ${type}`:''}`} key={`${prefix}-${type}-${number}`}>{String(number).padStart(2,'0')}</td>)
+  const download = async () => { setExporting(true); try { await exportTrendElement('ssq-heat-export',`双色球-冷热图-${analysis}期分析-${period}期.png`); trackAnalytics('export_chart',{page:'trend',game:'ssq',chart:'heat'}) } finally { setExporting(false) } }
+  return <section className={`card trend-fold-card heat-trend-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><TrendingUp size={18}/><b>冷热图</b><small>按频次降序 · 同频号码降序</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls heat-controls"><span>每行统计该期开奖前所选期数，再标注当期奖号</span><div className="trend-filter-actions"><label className="period-filter"><span>分析</span><select value={analysis} onChange={event=>setAnalysis(Number(event.target.value))}>{heatAnalysisPeriods.map(value=><option value={value} key={value}>{value}期</option>)}</select></label><label className="period-filter"><span>显示</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[30,50,100].map(value => <option value={value} key={value}>{value}期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'导出高清图'}</button></div></div><div className="heat-table-scroll"><table className="heat-table ranked-heat-table ssq-ranked-heat" id="ssq-heat-export"><thead><tr><th rowSpan="2">期号</th><th colSpan="33">红球</th><th rowSpan="2">三区比</th><th rowSpan="2">和值</th><th rowSpan="2">极值</th><th colSpan="16">蓝球</th></tr><tr><th className="hot-label" colSpan="11">热码(11)</th><th className="warm-label" colSpan="11">温码(11)</th><th className="cold-label" colSpan="11">冷码(11)</th><th className="hot-label" colSpan="8">热码(8)</th><th className="cold-label" colSpan="8">冷码(8)</th></tr></thead><tbody>{rows.map(row => <tr className={row.forecast?'forecast-row':''} key={row.record.id}><th>{row.record.issue}</th>{cells(row.red[0],'hot',row.redHits,'red')}{cells(row.red[1],'warm',row.redHits,'red')}{cells(row.red[2],'cold',row.redHits,'red')}<td className="heat-ratio">{row.zoneRatio}</td><td className="heat-stat-value">{row.sum}</td><td className="heat-stat-value">{row.extreme}</td>{cells(row.blue[0],'hot',row.blueHits,'blue')}{cells(row.blue[1],'cold',row.blueHits,'blue')}</tr>)}{Array.from({length:2},(_,rowIndex)=><tr className="heat-blank-row" key={`ssq-blank-${rowIndex}`}><th>&nbsp;</th>{Array.from({length:33},(_,index)=><td className="heat-number" key={`red-${index}`}/>) }<td className="heat-ratio"/><td className="heat-stat-value"/><td className="heat-stat-value"/>{Array.from({length:16},(_,index)=><td className="heat-number" key={`blue-${index}`}/>)}</tr>)}</tbody></table></div></>}</section>
+}
+
+function Kl8DataViews({ history }) {
+  const [expanded,setExpanded]=useState(false),[view,setView]=useState('matrix'),[period,setPeriod]=useState(20),[exporting,setExporting]=useState(false)
+  const rows=useMemo(()=>history.slice(0,period).reverse(),[history,period])
+  const metrics=record=>{const numbers=record.redBalls.map(Number).sort((a,b)=>a-b),sum=numbers.reduce((a,b)=>a+b,0),min=numbers[0],max=numbers.at(-1),span=max-min;let runs=0;for(let i=1;i<numbers.length;i++)if(numbers[i]===numbers[i-1]+1&&(i===1||numbers[i-1]!==numbers[i-2]+1))runs++;return{sum,span,max,min,sumTail:sum%10,average:Math.round(sum/numbers.length),sumSpan:sum+span,diffSpan:sum-span,tailSum:numbers.reduce((total,n)=>total+n%10,0),runs,tailGroups:new Set(numbers.map(n=>n%10)).size}}
+  const columns=[['sum','和值'],['span','跨度'],['max','最大值'],['min','最小值'],['sumTail','和值尾'],['average','均值'],['sumSpan','和跨和'],['diffSpan','和跨差'],['tailSum','尾数和值'],['runs','连号组数'],['tailGroups','尾数组数']]
+  const download=async()=>{setExporting(true);try{await exportTrendElement('kl8-data-export',`快乐8-${view==='matrix'?'基础矩阵图':'综合数据表'}-${period}期.png`);trackAnalytics('export_chart',{page:'trend',game:'kl8',chart:view})}finally{setExporting(false)}}
+  return <section className={`card trend-fold-card kl8-data-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><TableProperties size={18}/><b>快乐8数据图表</b><small>基础矩阵与综合数据查阅</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls kl8-data-controls"><div className="kl8-view-tabs"><button className={view==='matrix'?'active':''} onClick={()=>setView('matrix')}>基础矩阵图</button><button className={view==='analytics'?'active':''} onClick={()=>setView('analytics')}>综合数据查阅表</button></div><div className="trend-filter-actions"><label className="period-filter"><span>期数</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[20,30,50,100].map(value=><option value={value} key={value}>近 {value} 期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'下载图片'}</button></div></div><div className="kl8-data-scroll"><div id="kl8-data-export">{view==='matrix'?<div className="kl8-matrix-grid">{rows.map(record=>{const hits=new Set(record.redBalls.map(Number));return <article className="kl8-matrix-item" key={record.id}><h4>{record.issue}期</h4><div>{Array.from({length:80},(_,index)=>index+1).map(number=><span className={hits.has(number)?'hit':''} key={number}>{String(number).padStart(2,'0')}</span>)}</div></article>})}</div>:<table className="kl8-analytics-table"><thead><tr><th>期号</th>{columns.map(([,label])=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(record=>{const data=metrics(record);return <tr key={record.id}><th>{record.issue}</th>{columns.map(([key])=><td key={key}>{data[key]}</td>)}</tr>})}</tbody></table>}</div></div></>}</section>
+}
+
+function HistoryList({ history, defaultExpanded = false, onOpen }) {
+  const [expanded, setExpanded] = useState(defaultExpanded)
   const [period, setPeriod] = useState(30)
   const [page, setPage] = useState(1)
   const filtered = history.slice(0, period)
@@ -190,117 +429,247 @@ function HistoryList({ history }) {
   const changePeriod = value => { setPeriod(value); setPage(1) }
   return <section className={`card trend-history trend-fold-card ${expanded ? 'expanded' : ''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><Clock3 size={18}/><b>历史开奖号码</b><small>近 {period} 期 · 每页10期</small></span><ChevronDown size={20}/></button>
     {expanded && <div className="trend-history-content"><div className="history-head"><span>开奖明细</span><label className="period-filter"><span>期数</span><select value={period} onChange={event => changePeriod(Number(event.target.value))}>{[10,20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div>
-    <div className="history-list">{rows.map(record => <div className="history" key={record.id}><span>第 {record.issue} 期</span><Balls small groups={[{ values: record.redBalls }, { values: record.blueBalls, accent: true }]}/></div>)}</div>
+    <div className="history-list">{rows.map(record => <button type="button" className="history history-link" onClick={() => onOpen?.(record)} key={record.id}><span>第 {record.issue} 期</span><Balls small groups={[{ values: record.redBalls }, { values: record.blueBalls, accent: true }]}/></button>)}</div>
     <div className="history-pagination"><button disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))}>上一页</button><span>{page} / {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))}>下一页</button></div>
     </div>}
   </section>
 }
 
-const klineMetrics = { sum:'和值', span:'跨度', heat:'热度', omission:'遗漏' }
-const maColors = { ma5:'#ff9500', ma10:'#3478f6', ma20:'#af52de' }
-const LazyKlineChart = React.lazy(() => import('./KlineChart.jsx'))
-
-function buildKlineData(history, metric, period) {
-  const chronological = history.slice().reverse()
-  const lastSeen = new Map()
-  const metricRows = chronological.map((record, index) => {
-    const values = [...record.redBalls, ...record.blueBalls].map(Number).filter(Number.isFinite)
-    let value = 0
-    if (metric === 'sum') value = values.reduce((total, number) => total + number, 0)
-    if (metric === 'span') value = values.length ? Math.max(...values) - Math.min(...values) : 0
-    if (metric === 'heat') {
-      const window = chronological.slice(Math.max(0, index - 9), index + 1)
-      const counts = new Map()
-      window.forEach(item => [...item.redBalls, ...item.blueBalls].forEach(number => counts.set(String(Number(number)), (counts.get(String(Number(number))) || 0) + 1)))
-      value = values.length ? values.reduce((total, number) => total + (counts.get(String(number)) || 0), 0) / values.length : 0
-    }
-    if (metric === 'omission') {
-      const unique = [...new Set(values)]
-      value = unique.length ? unique.reduce((total, number) => total + (lastSeen.has(number) ? index - lastSeen.get(number) - 1 : index + 1), 0) / unique.length : 0
-    }
-    ;[...new Set(values)].forEach(number => lastSeen.set(number, index))
-    return { issue:record.issue, numbers:[...record.redBalls, ...record.blueBalls].join(' '), value:Number(value.toFixed(2)) }
-  })
-  const rows = metricRows.map((row, index) => {
-    const open = index ? metricRows[index - 1].value : row.value
-    const close = row.value
-    const windowValues = metricRows.slice(Math.max(0, index - 3), index + 1).map(item => item.value)
-    const high = Math.max(open, close, ...windowValues)
-    const low = Math.min(open, close, ...windowValues)
-    const average = length => index + 1 < length ? null : Number((metricRows.slice(index - length + 1, index + 1).reduce((total, item) => total + item.value, 0) / length).toFixed(2))
-    return { ...row, open, close, high, low, range:[low,high], ma5:average(5), ma10:average(10), ma20:average(20) }
-  })
-  return rows.slice(-period)
-}
-
-function KlineAnalysis({ history }) {
-  const [expanded, setExpanded] = useState(false)
-  const [metric, setMetric] = useState('sum')
-  const [period, setPeriod] = useState(30)
-  const [movingAverages, setMovingAverages] = useState({ ma5:true, ma10:true, ma20:true })
-  const data = useMemo(() => buildKlineData(history, metric, period), [history, metric, period])
-  const chartWidth = Math.max(640, data.length * 28)
-  return <section className={`card kline-card ${expanded ? 'expanded' : ''}`}><button className="kline-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><TrendingUp size={18}/><b>K线均线分析</b><small>{klineMetrics[metric]} · K线 + MA</small></span><ChevronDown size={20}/></button>
-    {expanded && <div className="kline-content"><div className="kline-controls"><div className="kline-metrics">{Object.entries(klineMetrics).map(([key,label]) => <button className={metric === key ? 'active' : ''} onClick={() => setMetric(key)} key={key}>{label}</button>)}</div><label className="period-filter"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div>
-      <div className="ma-switches">{[['ma5','MA5'],['ma10','MA10'],['ma20','MA20']].map(([key,label]) => <label style={{ '--ma-color':maColors[key] }} key={key}><input type="checkbox" checked={movingAverages[key]} onChange={() => setMovingAverages(current => ({ ...current, [key]:!current[key] }))}/><i/>{label}</label>)}</div>
-      <div className="kline-scroll"><div style={{ width:chartWidth, height:300 }}><React.Suspense fallback={<div className="kline-loading">正在加载图表…</div>}><LazyKlineChart data={data} movingAverages={movingAverages} colors={maColors}/></React.Suspense></div></div>
-      <p className="kline-notice">仅展示历史号码派生指标变化，不代表未来开奖结果。</p></div>}
-  </section>
-}
-
-function Trend({ item, all, back, save }) {
+function HistoryPage({ item, all, back, onOpen }) {
   const history = all.filter(record => record.game === item.game).slice(0, 50)
-  const frequencyPeriod = ['fc3d', 'pl3'].includes(item.game) ? 20 : item.game === 'pl5' ? 10 : 30
-  const frequencyHistory = history.slice(0, frequencyPeriod)
-  const numbers = useMemo(() => {
-    const max = Math.max(9, ...frequencyHistory.flatMap(record => [...record.redBalls, ...record.blueBalls].map(Number)))
-    const counts = new Map()
-    frequencyHistory.forEach(record => [...record.redBalls, ...record.blueBalls].forEach(value => counts.set(value, (counts.get(value) || 0) + 1)))
-    return Array.from({ length: max + (max >= 10 ? 1 : 0) }, (_, index) => max >= 10 ? String(index + 1).padStart(2, '0') : String(index)).map(value => ({ value, count: counts.get(value) || counts.get(String(Number(value))) || 0 }))
-  }, [frequencyHistory])
-  return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回首页</button>
-    <div className="section-head"><div><h1>{item.name}走势图</h1></div><span className={`game-icon ${item.game}`}>{item.icon}</span></div>
-    <section className="card frequency"><h3><TrendingUp size={18}/> 号码出现次数 <small>近 {frequencyHistory.length} 期</small></h3><div className="frequency-grid">{numbers.map(number => <div className="frequency-item" key={number.value}><b>{number.count}</b><i style={{ height: `${Math.max(8, number.count * 8)}px` }}/><span>{number.value}</span></div>)}</div></section>
-    <TraditionalTrendTable game={item.game} history={history} save={save}/>
-    <KlineAnalysis history={history}/>
-    <HistoryList history={history}/>
+  return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>
+    <div className="section-head page-title-compact"><div><h1>{item.name}历史开奖</h1><p>按期查看开奖号码</p></div><span className={`game-icon ${item.game}`}>{item.icon}</span></div>
+    <HistoryList history={history} defaultExpanded onOpen={onOpen}/>
   </main>
 }
 
-function Detail({ item, all, back }) {
-  const history = all.filter(r => r.game === item.game).slice(0, 50)
-  return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button><div className="detail-hero"><span className={`game-icon ${item.game}`}>{item.icon}</span><h1>{item.name}</h1><p>第 {item.issue} 期 · {item.drawDate}</p><Balls groups={[{ values: item.redBalls }, { values: item.blueBalls, accent: true }]}/></div>
+function RulesPage({ item, back }) {
+  const rule = rules.find(entry => entry.key === item.game)
+  const detail = playRules[item.game]
+  return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>
+    <div className="section-head page-title-compact"><div><h1>{item.name}玩法规则</h1><p>选号方式与号码范围</p></div><span className={`game-icon ${item.game}`}>{item.icon}</span></div>
+    <section className="card rules-card"><h2>{detail?.title || '基本规则'}</h2><p className="rules-summary">{detail?.intro}</p>
+      <div className="rules-section"><h3>开奖时间</h3><p>{detail?.drawTime}</p></div>
+      <div className="rules-section"><h3>玩法规则</h3>{detail?.paragraphs.map((paragraph,index) => <p key={index}>{paragraph}</p>)}</div>
+      <div className="rules-groups">{rule?.groups.map((group,index) => <article key={index}><b>{rule.groups.length > 1 ? (group.accent ? '蓝球 / 后区' : '红球 / 前区') : '号码区'}</b><span>{rule.pickCountOptions ? `选择 ${rule.pickCountOptions[0]}—${rule.pickCountOptions.at(-1)} 个号码` : `选择 ${group.count} 个号码`}</span><small>范围 {group.min}—{group.max}{group.repeatable ? '，号码可重复' : '，号码不重复'}</small></article>)}</div>
+      {detail?.prizes?.length > 0 && <div className="rules-section"><h3>奖项设置</h3><div className="rules-table-wrap"><table className="rules-table"><thead><tr><th>奖级 / 玩法</th><th>中奖说明</th><th>奖金</th></tr></thead><tbody>{detail.prizes.map((row,index) => <tr key={index}>{row.map((cell,cellIndex) => <td key={cellIndex}>{cell}</td>)}</tr>)}</tbody></table></div></div>}
+    </section>
+    <section className="card rules-notice"><h3><Info size={18}/>温馨提示</h3><p>本页仅作玩法说明与号码查询，不提供彩票销售或代购服务。规则若有调整，请以官方最新公告为准。</p></section>
+  </main>
+}
+
+const statusMetrics = { oddEven:'奇偶比', bigSmall:'大小比', sumTail:'和尾', span:'跨度', shape:'组选形态', primeComposite:'质合比', danma:'胆码' }
+const maColors = { ma5:'#ff9500', ma10:'#3478f6', ma20:'#af52de' }
+const LazyKlineChart = React.lazy(() => import('./KlineChart.jsx'))
+
+function getStatusOptions(game, metric) {
+  const digits = game === 'pl5' ? 5 : 3
+  if (metric === 'danma') return Array.from({ length:10 }, (_, index) => String(index))
+  if (['oddEven','bigSmall','primeComposite'].includes(metric)) return Array.from({ length:digits + 1 }, (_, index) => `${digits - index}:${index}`)
+  if (metric === 'shape') return ['豹子','组三','组六']
+  return Array.from({ length:10 }, (_, index) => String(index))
+}
+
+function getStatusValue(game, metric, record) {
+  const digits = record.redBalls.map(Number).filter(Number.isFinite)
+  const ratio = predicate => `${digits.filter(predicate).length}:${digits.filter(value => !predicate(value)).length}`
+  if (metric === 'oddEven') return ratio(value => value % 2 === 1)
+  if (metric === 'bigSmall') return ratio(value => value >= 5)
+  if (metric === 'primeComposite') return ratio(value => [1,2,3,5,7].includes(value))
+  if (metric === 'sumTail') return String(digits.reduce((sum,value) => sum + value, 0) % 10)
+  if (metric === 'span') return String(digits.length ? Math.max(...digits) - Math.min(...digits) : 0)
+  if (metric === 'shape') return getDigitShape(game, digits)
+  if (metric === 'danma') return digits.join(',')
+  return '--'
+}
+
+function buildStatusTrendData(history, game, metric, target, period) {
+  const chronological = history.slice(0, period).reverse()
+  const prepared = chronological.map(record => { const actual = getStatusValue(game, metric, record); const hit = metric === 'danma' ? actual.split(',').includes(target) : actual === target; return { record, actual, hit } })
+  let trend = 0, omission = 0, hitStreak = 0, missStreak = 0
+  const rows = prepared.map(({ record, actual, hit }) => {
+    const open = trend
+    const hitOmission = hit ? omission : null
+    if (hit) { hitStreak += 1; missStreak = 0 } else { missStreak += 1; hitStreak = 0 }
+    const change = hit ? 3 : -1
+    trend += change
+    omission = hit ? 0 : omission + 1
+    return { issue:record.issue, numbers:record.redBalls.join(' '), actual, target, hit, open, close:trend, change, range:[Math.min(open,trend),Math.max(open,trend)], omission, hitOmission }
+  })
+  return rows.map((row,index) => {
+    const average = length => index + 1 < length ? null : Number((rows.slice(index - length + 1,index + 1).reduce((sum,item) => sum + item.close,0) / length).toFixed(2))
+    return { ...row, ma5:average(5), ma10:average(10), ma20:average(20) }
+  })
+}
+
+function StatusTrendAnalysis({ history, game }) {
+  const [expanded, setExpanded] = useState(false)
+  const metricKeys = game === 'pl5' ? ['oddEven','bigSmall','primeComposite','sumTail','span','danma'] : ['oddEven','bigSmall','shape','sumTail','span','danma']
+  const [metric, setMetric] = useState('oddEven')
+  const options = getStatusOptions(game, metric)
+  const [target, setTarget] = useState(() => getStatusOptions(game,'oddEven')[1])
+  const [period, setPeriod] = useState(30)
+  const [movingAverages, setMovingAverages] = useState({ ma5:true, ma10:true, ma20:true })
+  const [fitScreen, setFitScreen] = useState(false)
+  const chooseMetric = key => { setMetric(key); setTarget(getStatusOptions(game,key)[0]) }
+  const issueOptions = useMemo(() => history.slice(0,period).reverse().map(record => record.issue), [history, period])
+  const [startIssue, setStartIssue] = useState(() => history.slice(0,30).at(-1)?.issue || '')
+  const [endIssue, setEndIssue] = useState(() => history[0]?.issue || '')
+  useEffect(() => { setStartIssue(issueOptions[0] || ''); setEndIssue(issueOptions.at(-1) || '') }, [period, game])
+  const rangeHistory = useMemo(() => {
+    const chronological = history.slice(0,period).reverse()
+    const startIndex = Math.max(0, chronological.findIndex(record => record.issue === startIssue))
+    const matchedEnd = chronological.findIndex(record => record.issue === endIssue)
+    const endIndex = matchedEnd < 0 ? chronological.length - 1 : matchedEnd
+    return chronological.slice(Math.min(startIndex,endIndex), Math.max(startIndex,endIndex) + 1).reverse()
+  }, [history, period, startIssue, endIssue])
+  const data = useMemo(() => buildStatusTrendData(rangeHistory, game, metric, target, rangeHistory.length), [rangeHistory, game, metric, target])
+  const hits = data.filter(row => row.hit).length
+  const completedOmissions = data.filter(row => row.hit).map(row => row.hitOmission)
+  const averageOmission = completedOmissions.length ? Number((completedOmissions.reduce((sum,value) => sum + value,0) / completedOmissions.length).toFixed(1)) : 0
+  const maximumOmission = Math.max(0,...completedOmissions)
+  return <section className={`card kline-card ${expanded ? 'expanded' : ''}`}><button className="kline-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><TrendingUp size={18}/><b>指标状态趋势</b><small>{statusMetrics[metric]} {target} · 出现上涨 / 遗漏下降</small></span><ChevronDown size={20}/></button>
+    {expanded && <div className="kline-content"><div className="kline-controls"><div className="kline-metrics">{metricKeys.map(key => <button className={metric === key ? 'active' : ''} onClick={() => chooseMetric(key)} key={key}>{statusMetrics[key]}</button>)}</div><label className="period-filter"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[20,30,50,100,120].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div>
+      <div className="status-target-row"><label><span>目标状态</span><select value={target} onChange={event => setTarget(event.target.value)}>{options.map(value => <option value={value} key={value}>{value}</option>)}</select></label><div><span>出现 <b>{hits}</b> 次</span><span>平均遗漏 <b>{averageOmission}</b></span><span>最大遗漏 <b>{maximumOmission}</b></span></div></div>
+      <div className="ma-switches">{[['ma5','MA5'],['ma10','MA10'],['ma20','MA20']].map(([key,label]) => <label style={{ '--ma-color':maColors[key] }} key={key}><input type="checkbox" checked={movingAverages[key]} onChange={() => setMovingAverages(current => ({ ...current, [key]:!current[key] }))}/><i/>{label}</label>)}<button type="button" className={fitScreen ? 'active' : ''} aria-pressed={fitScreen} onClick={() => setFitScreen(value => !value)}>{fitScreen ? '已适应屏幕' : '适应屏幕'}</button></div>
+      <div className={`kline-scroll ${fitScreen ? 'fit-screen' : ''}`}><div className="status-trend-canvas" style={{ '--trend-points':data.length }}><React.Suspense fallback={<div className="kline-loading">正在加载图表…</div>}><LazyKlineChart data={data} movingAverages={movingAverages} colors={maColors} metricLabel={statusMetrics[metric]} target={target} averageOmission={averageOmission} maximumOmission={maximumOmission} issueOptions={issueOptions} startIssue={startIssue} endIssue={endIssue} onStartIssueChange={next => { setStartIssue(next); if (issueOptions.indexOf(next) > issueOptions.indexOf(endIssue)) setEndIssue(next) }} onEndIssueChange={next => { setEndIssue(next); if (issueOptions.indexOf(next) < issueOptions.indexOf(startIssue)) setStartIssue(next) }}/></React.Suspense></div></div>
+      <p className="kline-notice">红柱表示目标状态当期出现并向上 3 个单位，绿柱表示当期未出现并向下 1 个单位；每根柱从上一根柱的终点连续起始。历史统计仅供参考。</p></div>}
+  </section>
+}
+
+function Trend({ item, all, back, save, onOpen }) {
+  const [activeGame, setActiveGame] = useState(item.game)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const activeItem = all.find(record => record.game === activeGame) || item
+  const history = all.filter(record => record.game === activeGame).slice(0, 120)
+  const frequencyPeriod = ['fc3d', 'pl3'].includes(activeGame) ? 20 : activeGame === 'pl5' ? 10 : 30
+  const frequencyHistory = history.slice(0, frequencyPeriod)
+  const numbers = useMemo(() => {
+    const domains = { fc3d:[0,9], pl3:[0,9], pl5:[0,9], ssq:[1,33], dlt:[1,35], qxc:[0,9], qlc:[1,30], kl8:[1,80] }
+    const [min,max] = domains[activeGame] || [0,9]
+    const counts = new Map(Array.from({ length:max - min + 1 }, (_,index) => [min + index,0]))
+    frequencyHistory.forEach(record => record.redBalls.forEach(value => { const normalized = Number(value); if (counts.has(normalized)) counts.set(normalized,(counts.get(normalized) || 0) + 1) }))
+    return [...counts].map(([value,count]) => ({ value:min === 0 ? String(value) : String(value).padStart(2,'0'), count })).sort((a,b) => b.count - a.count || Number(a.value) - Number(b.value))
+  }, [frequencyHistory,activeGame])
+  const maxFrequency = Math.max(1, ...numbers.map(number => number.count))
+  if (!history.length) return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button><section className="card state"><h2>暂无走势图数据</h2><p>当前彩种暂未加载到开奖数据，请稍后重试。</p></section></main>
+  const chooseGame = game => { setActiveGame(game); setPickerOpen(false); scrollTo(0,0) }
+  return <main className="trend-page"><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>
+    <div className="section-head"><div><h1>{activeItem.name}走势图</h1><p>点击右侧图标切换彩种</p></div><button className="trend-game-switch" aria-label="切换彩种" aria-haspopup="dialog" onClick={() => setPickerOpen(true)}><span className={`game-icon ${activeGame}`}>{activeItem.icon}</span><ChevronDown size={15}/></button></div>
+    <section className="card frequency"><h3><TrendingUp size={18}/> 号码出现次数 <small>近 {frequencyHistory.length} 期</small></h3><div className={`frequency-bars ${['ssq','dlt','qxc','qlc','kl8'].includes(activeGame) ? 'frequency-bars-scroll' : ''}`}>{numbers.map(number => <div className="frequency-bar-item" key={number.value}><span>{number.value}</span><i><em style={{ width:`${number.count / maxFrequency * 100}%` }}/></i><b>{number.count} 次</b></div>)}</div></section>
+    <TraditionalTrendTable key={activeGame} game={activeGame} history={history} save={save}/>
+    {activeGame === 'dlt' && <DltHeatTrend history={history}/>}
+    {activeGame === 'ssq' && <SsqHeatTrend history={history}/>}
+    {activeGame === 'kl8' && <Kl8DataViews history={history}/>}
+    {['fc3d','pl3','pl5'].includes(activeGame) && <StatusTrendAnalysis key={`status-${activeGame}`} history={history} game={activeGame}/>}
+    <HistoryList history={history} onOpen={record => { const target = all.find(row => row.id === record.id) || record; onOpen?.(target) }}/>
+    {pickerOpen && <div className="game-picker-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPickerOpen(false) }}><section className="game-picker" role="dialog" aria-modal="true" aria-labelledby="game-picker-title"><header><div><h2 id="game-picker-title">选择彩种</h2><p>切换查看对应的走势数据</p></div><button aria-label="关闭" onClick={() => setPickerOpen(false)}>×</button></header><div className="game-picker-grid">{gameOrder.map(game => { const record = all.find(row => row.game === game); const meta = games[game]; return <button className={activeGame === game ? 'active' : ''} onClick={() => chooseGame(game)} key={game}><span className={`game-icon ${game}`}>{record?.icon || meta?.icon}</span><b>{record?.name || meta?.name}</b>{activeGame === game && <small>当前</small>}</button> })}</div></section></div>}
+  </main>
+}
+
+function countColdHotNumbers(records, field, max, { pad = true, unique = false } = {}) {
+  const start = max === 9 ? 0 : 1
+  const values = Array.from({ length:max - start + 1 }, (_,index) => start + index)
+  const counts = new Map(values.map(value => [value,0]))
+  records.forEach(record => {
+    const row = (record[field] || []).map(Number).filter(Number.isFinite)
+    const numbers = unique ? [...new Set(row)] : row
+    numbers.forEach(value => counts.set(value,(counts.get(value) || 0) + 1))
+  })
+  return values.map(value => ({ value:pad ? String(value).padStart(2,'0') : String(value), count:counts.get(value) || 0 }))
+}
+
+function thresholdGroups(entries, hot, warm) {
+  return [['热码',entries.filter(row => hot(row.count))],['温码',entries.filter(row => warm(row.count))],['冷码',entries.filter(row => !hot(row.count) && !warm(row.count))]]
+}
+
+function rankedGroups(entries, groupCount) {
+  const sorted = [...entries].sort((a,b) => b.count - a.count || Number(a.value) - Number(b.value))
+  if (groupCount === 2) { const split = Math.ceil(sorted.length / 2); return [['热码',sorted.slice(0,split)],['冷码',sorted.slice(split)]] }
+  const first = Math.ceil(sorted.length / 3), second = Math.ceil((sorted.length - first) / 2)
+  return [['热码',sorted.slice(0,first)],['温码',sorted.slice(first,first + second)],['冷码',sorted.slice(first + second)]]
+}
+
+function buildColdHotData(game, history, selectedPeriod) {
+  const settings = {
+    fc3d:{ period:7, max:9, pad:false, unique:false, hot:count => count > 2, warm:count => count === 2 },
+    pl3:{ period:7, max:9, pad:false, unique:false, hot:count => count > 2, warm:count => count === 2 },
+    pl5:{ period:10, max:9, pad:false, unique:true, hot:count => count > 4, warm:count => count === 4 },
+    ssq:{ period:11, max:33, pad:true, unique:false, hot:count => count > 2, warm:count => count === 2 },
+    dlt:{ period:Math.min(selectedPeriod,history.length), max:35, pad:true, unique:false }
+  }
+  const config = settings[game]
+  if (!config) return null
+  const records = history.slice(0,config.period)
+  const entries = countColdHotNumbers(records,'redBalls',config.max,{ pad:config.pad, unique:config.unique })
+  if (game === 'dlt') {
+    const backEntries = countColdHotNumbers(records,'blueBalls',12)
+    return { period:records.length, note:'按出现次数降序排列并平均分区', sections:[{ title:'前区', groups:rankedGroups(entries,3) },{ title:'后区', groups:rankedGroups(backEntries,2) }] }
+  }
+  const sections = [{ title:['ssq'].includes(game) ? '红球' : '', groups:thresholdGroups(entries,config.hot,config.warm) }]
+  if (game === 'ssq') sections.push({ title:'蓝球', groups:thresholdGroups(countColdHotNumbers(records,'blueBalls',16),config.hot,config.warm) })
+  return { period:records.length, note:game === 'pl5' ? '每期相同数字只统计一次' : '按号码实际出现次数统计', sections }
+}
+
+function ColdHotCard({ game, history }) {
+  const [period,setPeriod] = useState(50)
+  const result = useMemo(() => buildColdHotData(game,history,period), [game,history,period])
+  if (!result) return null
+  return <section className="card cold-hot-card"><header><h3><TrendingUp size={18}/> 胆码冷热宝</h3>{game === 'dlt' ? <label className="cold-hot-period"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[10,20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label> : <small>近 {result.period} 期</small>}</header><p>{result.note}</p>{result.sections.map(section => <div className="cold-hot-section" key={section.title || 'numbers'}>{section.title && <h4>{section.title}</h4>}<div className="cold-hot-groups">{section.groups.map(([label,rows],index) => <div className={`cold-hot-row level-${index}`} key={label}><b>{label}</b><div>{rows.map(row => <span title={`${row.value} 出现 ${row.count} 次`} key={row.value}><i className="cold-hot-number">{row.value}</i><small>{row.count}次</small></span>)}</div></div>)}</div></div>)}</section>
+}
+
+function Detail({ item, all, back, onSwitchGame, onOpen }) {
+  const gameHistory = all.filter(r => r.game === item.game)
+  const history = gameHistory.slice(0, 50)
+  const currentIndex = gameHistory.findIndex(record => record.id === item.id || record.issue === item.issue)
+  const previousRecord = currentIndex >= 0 ? gameHistory[currentIndex + 1] : undefined
+  const nextGame = gameOrder[(gameOrder.indexOf(item.game) + 1) % gameOrder.length]
+  const nextRecord = all.find(record => record.game === nextGame)
+  return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button><div className="detail-hero"><button type="button" className={`game-icon ${item.game} detail-game-switch`} title="点击切换彩种" aria-label="点击切换彩种" onClick={() => nextRecord && onSwitchGame?.(nextRecord, all)}>{item.icon}</button><h1>{item.name}</h1><p>第 {item.issue} 期 · {item.drawDate}</p><Balls groups={[{ values: item.redBalls }, { values: item.blueBalls, accent: true }]}/></div>
     <section className="card detail-card"><h3>本期数据</h3><div className="detail-grid"><span>本期销量<b>{item.saleAmountText}</b></span><span>奖池累计<b>{item.poolAmountText}</b></span><span>一等奖<b>{item.firstPrizeText}</b></span></div></section>
-    <DrawMetrics game={item.game} record={item}/>
-    <HistoryList history={history}/></main>
+    <DrawMetrics game={item.game} record={item} previousRecord={previousRecord}/>
+    <ColdHotCard game={item.game} history={history}/>
+    <HistoryList history={history} onOpen={onOpen}/></main>
 }
 
 function RandomPage({ save }) {
-  const [rule, setRule] = useState(rules[0]), [mode, setMode] = useState('direct'), [count, setCount] = useState(1), [entries, setEntries] = useState(() => [generate(rules[0])]), [custom, setCustom] = useState(() => rules[0].groups.map(() => []))
-  const regenerate = (r = rule, m = mode, c = count) => setEntries(Array.from({ length: c }, () => generate(r, m)))
-  const chooseRule = r => { setRule(r); setMode('direct'); setCustom(r.groups.map(() => [])); regenerate(r, 'direct', count) }
+  const [rule, setRule] = useState(rules[0]), [mode, setMode] = useState('direct'), [count, setCount] = useState(1), [pickCount, setPickCount] = useState(rules[0].groups[0].count), [entries, setEntries] = useState([]), [custom, setCustom] = useState(() => rules[0].groups.map(() => [])), [rolling,setRolling] = useState(false)
+  const rollingInterval = useRef(null)
+  const activeGroups = useMemo(() => rule.groups.map(group => rule.pickCountOptions ? { ...group, count:pickCount } : group), [rule,pickCount])
+  const activeRule = useMemo(() => ({ ...rule, groups:activeGroups }), [rule,activeGroups])
+  const clearRolling = () => { clearInterval(rollingInterval.current); rollingInterval.current = null; setRolling(false) }
+  useEffect(() => () => clearInterval(rollingInterval.current),[])
+  const regenerate = (r = activeRule, m = mode, c = count) => { setEntries(Array.from({ length:c }, () => generate(r,m))); trackAnalytics('random_generate',{ page:'random', game:r.key }) }
+  const startRolling = () => {
+    if (rolling) return clearRolling()
+    setRolling(true)
+    setEntries(Array.from({ length:count }, () => generate(activeRule,mode)))
+    trackAnalytics('random_generate',{ page:'random', game:activeRule.key })
+    rollingInterval.current = setInterval(() => setEntries(Array.from({ length:count }, () => generate(activeRule,mode))), 82)
+  }
+  const chooseRule = r => { clearRolling(); setRule(r); setPickCount(r.pickCountOptions?.at(-1) || r.groups[0].count); setMode('direct'); setCustom(r.groups.map(() => [])); setEntries([]) }
   const chooseCustom = (groupIndex, value) => {
-    const group = rule.groups[groupIndex]
+    const group = activeGroups[groupIndex]
     setCustom(current => current.map((values, index) => {
       if (index !== groupIndex) return values
       if (group.repeatable) return values.length >= group.count ? values : [...values, value]
       return values.includes(value) ? values.filter(item => item !== value) : [...values, value].sort((a,b) => +a - +b)
     }))
   }
-  const customComplete = custom.every((values, index) => values.length >= rule.groups[index].count)
+  const customComplete = custom.every((values, index) => values.length >= activeGroups[index].count)
   const saveAll = () => {
     const savedEntries = entries.map((groups,i) => ({ id:`${Date.now()}-${i}`, groups, sourceLabel:'随机' }))
-    if (customComplete) savedEntries.push({ id:`${Date.now()}-custom`, sourceLabel:'自选', groups: custom.map((values,index) => ({ values, accent: rule.groups[index].accent })) })
-    save({ id: String(Date.now()), planName: rule.name + (rule.grouped ? ` · ${{direct:'直选',group3:'组三',group6:'组六'}[mode]}` : ''), createdAt: new Date().toLocaleString('zh-CN'), entries: savedEntries })
+    if (customComplete) savedEntries.push({ id:`${Date.now()}-custom`, sourceLabel:'自选', groups: custom.map((values,index) => ({ values, accent: activeGroups[index].accent })) })
+    save({ id: String(Date.now()), planName: rule.name + (rule.grouped ? ` · ${{direct:'直选',group3:'组选三',group6:'组选六'}[mode]}` : ''), createdAt: new Date().toLocaleString('zh-CN'), entries: savedEntries })
   }
-  return <main><div className="section-head"><div><h1>选号工具</h1><p>选择彩种，随机生成或自定义号码</p></div></div>
-    <div className="tabs">{rules.map(r => <button className={r.key === rule.key ? 'active' : ''} onClick={event => { const target = event.currentTarget; chooseRule(r); requestAnimationFrame(() => target.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' })) }} key={r.key}>{r.name}</button>)}</div>
-    {rule.grouped && <div className="segmented">{[['direct','直选'],['group3','组三'],['group6','组六']].map(([k,v]) => <button className={mode === k ? 'active' : ''} onClick={() => { setMode(k); regenerate(rule,k,count) }} key={k}>{v}</button>)}</div>}
-    <section className="card generator"><div className="generator-head"><div><h2>{rule.name}</h2><p>{rule.hint}</p></div><div><select value={count} onChange={e => { const c = +e.target.value; setCount(c); regenerate(rule,mode,c) }}>{[1,3,5,10].map(n => <option key={n} value={n}>{n} 组</option>)}</select><button className="generate-button" onClick={() => regenerate()}><RefreshCw size={17}/> 随机生成</button></div></div>
-      <div className="generated">{entries.map((groups,i) => <div className="entry" key={i}><em>{String(i+1).padStart(2,'0')}</em><Balls groups={groups}/></div>)}</div>
+  return <main className="random-page"><div className="tabs lottery-tabs">{rules.map(r => <button className={r.key === rule.key ? 'active' : ''} onClick={event => { const target = event.currentTarget; chooseRule(r); requestAnimationFrame(() => target.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' })) }} key={r.key}>{r.name}</button>)}</div>
+    {rule.grouped && <div className="segmented">{[['direct','直选'],['group3','组选三'],['group6','组选六']].map(([k,v]) => <button title={k === 'direct' ? '定位玩法' : '不定位玩法'} className={mode === k ? 'active' : ''} onClick={() => { clearRolling(); setMode(k); setEntries([]) }} key={k}>{v}</button>)}</div>}
+    <section className={`card generator random-generator random-${rule.key} ${rolling ? 'rolling' : ''}`}><div className="generator-head"><div><h2>随机选号</h2><p>{rule.hint}</p></div><div className="generator-head-selects">{rule.pickCountOptions && <select aria-label="每组选号个数" value={pickCount} onChange={event => { clearRolling(); setPickCount(Number(event.target.value)); setCustom(activeGroups.map(() => [])); setEntries([]) }}>{rule.pickCountOptions.map(n => <option key={n} value={n}>{n} 个</option>)}</select>}<select aria-label="生成组数" value={count} onChange={event => { clearRolling(); setCount(Number(event.target.value)); setEntries([]) }}>{[1,3,5,10].map(n => <option key={n} value={n}>{n} 组</option>)}</select></div></div>
+      <div className="random-results">{entries.length ? entries.map((groups,i) => <div className="entry" key={i}><Balls groups={groups}/></div>) : <div className="random-placeholder">{activeGroups.map((group,index) => <React.Fragment key={index}>{index > 0 && <span>＋</span>}{Array.from({length:group.count},(_,i) => <i key={i}>--</i>)}</React.Fragment>)}</div>}</div>
+      <button className={`random-action ${rolling ? 'pause' : ''}`} onClick={startRolling}>{rolling ? <><span>■</span> 暂停选号</> : entries.length ? <><RefreshCw size={17}/> 重新随机</> : <><RefreshCw size={17}/> 开始随机</>}</button>
     </section>
-    <section className="card custom-picker"><div className="custom-head"><div><h2>自定义选号</h2><p>按当前彩种规则选择号码；已选号码可再次点击移除</p></div>{custom.some(values => values.length) && <button onClick={() => setCustom(rule.groups.map(() => []))}>清空</button>}</div>
-      {rule.groups.map((group, groupIndex) => <div className="custom-group" key={groupIndex}><div className="custom-label"><b>{rule.groups.length > 1 ? (group.accent ? '蓝球 / 后区' : '红球 / 前区') : '号码区'}</b><span>已选 {custom[groupIndex].length} / 至少 {group.count}</span></div>
+    <section className="card custom-picker"><div className="custom-head"><div><h2>自定义选号</h2><p>按当前彩种规则选择号码；已选号码可再次点击移除</p></div>{custom.some(values => values.length) && <button onClick={() => setCustom(activeGroups.map(() => []))}>清空</button>}</div>
+      {activeGroups.map((group, groupIndex) => <div className="custom-group" key={groupIndex}><div className="custom-label"><b>{activeGroups.length > 1 ? (group.accent ? '蓝球 / 后区' : '红球 / 前区') : '号码区'}</b><span>已选 {custom[groupIndex].length} / 至少 {group.count}</span></div>
         {custom[groupIndex].length > 0 && <Balls small groups={[{ values: custom[groupIndex], accent: group.accent }]}/>}<div className="number-grid">{Array.from({ length: group.max - group.min + 1 }, (_, index) => group.min === 0 ? String(group.min + index) : String(group.min + index).padStart(2,'0')).map(value => <button className={custom[groupIndex].includes(value) ? (group.accent ? 'selected blue-choice' : 'selected') : ''} onClick={() => chooseCustom(groupIndex,value)} key={value}>{value}</button>)}</div>
       </div>)}
       <p className={`custom-status ${customComplete ? 'complete' : ''}`}>{customComplete ? '自选号码已符合规则，保存时会一并加入方案' : '请完成各号码区的最低选择数量'}</p>
@@ -312,87 +681,243 @@ function RandomPage({ save }) {
 function Plans({ plans, remove }) {
   const [filter, setFilter] = useState('all')
   const filteredPlans = useMemo(() => filter === 'all' ? plans : plans.filter(plan => plan.planName.startsWith(rules.find(rule => rule.key === filter)?.name || '')), [plans, filter])
-  return <main><div className="section-head"><div><h1>我的方案</h1><p>本机保存 · 共 {plans.length} 份</p></div></div>
+  return <main>
     {plans.length > 0 && <div className="plan-filters" aria-label="按彩种筛选"><button className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={event => { const target = event.currentTarget; setFilter('all'); requestAnimationFrame(() => target.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' })) }}>全部 <span>{plans.length}</span></button>{rules.map(rule => { const count = plans.filter(plan => plan.planName.startsWith(rule.name)).length; return <button className={filter === rule.key ? 'active' : ''} aria-pressed={filter === rule.key} onClick={event => { const target = event.currentTarget; setFilter(rule.key); requestAnimationFrame(() => target.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' })) }} key={rule.key}>{rule.name} <span>{count}</span></button> })}</div>}
     {!plans.length ? <div className="state"><Bookmark size={38}/><b>还没有保存的方案</b><p>前往“选号工具”生成并保存</p></div> : !filteredPlans.length ? <div className="state filtered-empty"><Bookmark size={34}/><b>该彩种暂无方案</b><p>请选择其他彩种，或前往选号工具保存方案</p></div> : <div className="cards">{filteredPlans.map(p => <article className="card plan" key={p.id}><header><div><h2>{p.planName}</h2><p>{p.createdAt}</p></div><button className="icon-btn danger" aria-label={`删除${p.planName}方案`} onClick={() => remove(p.id)}><Trash2 size={18}/></button></header>{p.entries.map((e,i) => <div className="entry" key={e.id || i}><PlanEntryLabel text={e.sourceLabel} fallback={String(i+1).padStart(2,'0')}/><Balls groups={e.groups}/></div>)}</article>)}</div>}
   </main>
 }
 
-const memberStorageKey = 'caishutong-phone-member'
-const maskPhone = phone => `${phone.slice(0,3)}****${phone.slice(-4)}`
+const memberStorageKey = 'caishutong-email-member'
+const memberSessionDays = 30
+const readStoredMember = () => {
+  try {
+    const value = JSON.parse(localStorage.getItem(memberStorageKey))
+    if (!value?.email || !value?.expiresAt || Date.now() >= Number(value.expiresAt)) { localStorage.removeItem(memberStorageKey); return null }
+    return value
+  } catch { return null }
+}
+const maskEmail = email => { const [name,domain=''] = String(email || '').split('@'); return `${name.slice(0,2)}${name.length > 2 ? '***' : '*'}@${domain}` }
 
-function PhoneLogin({ notify, onLogin }) {
-  const [phone,setPhone] = useState(''), [code,setCode] = useState(''), [sentCode,setSentCode] = useState(''), [seconds,setSeconds] = useState(0), [error,setError] = useState('')
+function EmailLogin({ notify, onLogin }) {
+  const [email,setEmail] = useState(''), [code,setCode] = useState(''), [seconds,setSeconds] = useState(0), [error,setError] = useState(''), [sending,setSending] = useState(false), [verifying,setVerifying] = useState(false), [codeSent,setCodeSent] = useState(false)
   useEffect(() => {
     if (!seconds) return
     const timer = setTimeout(() => setSeconds(value => value - 1), 1000)
     return () => clearTimeout(timer)
   }, [seconds])
-  const validPhone = /^1[3-9]\d{9}$/.test(phone)
-  const sendCode = () => {
-    if (!validPhone) return setError('请输入正确的11位手机号')
-    const nextCode = String(Math.floor(100000 + Math.random() * 900000))
-    setSentCode(nextCode); setSeconds(60); setError(''); notify(`测试验证码：${nextCode}`)
+  const normalizedEmail = email.trim().toLowerCase()
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+  const sendCode = async () => {
+    if (!validEmail) return setError('请输入正确的邮箱地址')
+    setSending(true); setError('')
+    try {
+      const response = await fetch('/api/auth/email/send-code',{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({ email:normalizedEmail }) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || '验证码发送失败')
+      setCodeSent(true); setSeconds(60); notify('验证码已发送，请检查邮箱')
+    } catch (reason) { setError(reason.message) } finally { setSending(false) }
   }
-  const submit = event => {
+  const submit = async event => {
     event.preventDefault()
-    if (!validPhone) return setError('请输入正确的11位手机号')
-    if (!sentCode) return setError('请先获取验证码')
-    if (code !== sentCode) return setError('验证码不正确，请重新输入')
-    onLogin({ phone, nickname:'彩友' })
+    if (!validEmail) return setError('请输入正确的邮箱地址')
+    if (!codeSent) return setError('请先获取验证码')
+    if (!/^\d{6}$/.test(code)) return setError('请输入6位验证码')
+    setVerifying(true); setError('')
+    try {
+      const response = await fetch('/api/auth/email/verify-code',{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({ email:normalizedEmail,code }) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || '验证码验证失败')
+      onLogin(body.member)
+    } catch (reason) { setError(reason.message) } finally { setVerifying(false) }
   }
-  return <section className="profile-login-card"><div className="login-mark"><Smartphone size={29}/></div><h2>手机号登录</h2><p>使用手机验证码登录，用于管理我的方案和会员权益</p><form onSubmit={submit}><label><span>手机号</span><input type="tel" inputMode="numeric" autoComplete="tel" maxLength="11" placeholder="请输入11位手机号" value={phone} onChange={event => { setPhone(event.target.value.replace(/\D/g,'').slice(0,11)); setError('') }}/></label><label><span>验证码</span><div className="code-field"><input inputMode="numeric" autoComplete="one-time-code" maxLength="6" placeholder="请输入6位验证码" value={code} onChange={event => { setCode(event.target.value.replace(/\D/g,'').slice(0,6)); setError('') }}/><button type="button" disabled={seconds > 0} onClick={sendCode}>{seconds > 0 ? `${seconds}秒后重发` : '获取验证码'}</button></div></label>{error && <p className="login-error">{error}</p>}<button className="login-submit" type="submit">验证并登录</button></form><small>当前为测试验证码 · 登录即代表同意《用户协议》和《隐私政策》</small></section>
+  return <section className="profile-login-card"><div className="login-mark"><Mail size={29}/></div><h2>邮箱验证码登录</h2><p>使用邮箱验证码登录，用于管理我的方案和会员权益</p><form onSubmit={submit}><label><span>邮箱地址</span><input type="email" inputMode="email" autoComplete="email" maxLength="120" placeholder="请输入邮箱地址" value={email} onChange={event => { setEmail(event.target.value); setCodeSent(false); setError('') }}/></label><label><span>验证码</span><div className="code-field"><input inputMode="numeric" autoComplete="one-time-code" maxLength="6" placeholder="请输入6位验证码" value={code} onChange={event => { setCode(event.target.value.replace(/\D/g,'').slice(0,6)); setError('') }}/><button type="button" disabled={seconds > 0 || sending} onClick={sendCode}>{sending ? '发送中…' : seconds > 0 ? `${seconds}秒后重发` : '获取验证码'}</button></div></label>{error && <p className="login-error">{error}</p>}<button className="login-submit" type="submit" disabled={verifying}>{verifying ? '正在验证…' : '验证并登录'}</button></form><small>验证码将发送至你的邮箱，10分钟内有效 · 登录即代表同意《用户协议》和《隐私政策》</small></section>
 }
 
 function HelpPage({ back, notify }) {
-  const [openFaq,setOpenFaq] = useState(0), [category,setCategory] = useState('功能建议'), [message,setMessage] = useState(''), [contact,setContact] = useState('')
+  const [openFaq,setOpenFaq] = useState(0), [category,setCategory] = useState('功能建议'), [message,setMessage] = useState(''), [contact,setContact] = useState(''), [submitting,setSubmitting] = useState(false)
   const faqs = [
     ['开奖数据多久更新？','开奖后系统会自动同步数据。网络或数据源延迟时，可在首页点击刷新按钮重新获取。'],
     ['保存的方案在哪里查看？','随机生成、自定义选号和走势模拟保存后，都会统一出现在底部“我的方案”中。'],
     ['走势图的数据代表预测结果吗？','不是。走势图仅整理历史开奖数据，不构成号码预测、投注建议或中奖承诺。'],
     ['如何保护我的账户信息？','微信授权仅用于识别账户。我们不会自动发布内容，也不会在未经允许时获取与功能无关的信息。']
   ]
-  const submit = event => {
+  const submit = async event => {
     event.preventDefault()
     if (message.trim().length < 5) return notify('请至少填写5个字的反馈内容')
-    const feedback = { id:Date.now(), category, message:message.trim(), contact:contact.trim(), createdAt:new Date().toISOString() }
-    let existing = []; try { existing = JSON.parse(localStorage.getItem('caishutong-feedback')) || [] } catch {}
-    localStorage.setItem('caishutong-feedback', JSON.stringify([feedback,...existing].slice(0,10)))
-    setMessage(''); setContact(''); notify('感谢反馈，内容已记录')
+    setSubmitting(true)
+    try {
+      const response = await fetch('/api/feedback',{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({ category,message:message.trim(),contact:contact.trim() }) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error || '反馈提交失败')
+      setMessage(''); setContact(''); trackAnalytics('submit_feedback',{page:'help'}); notify('感谢反馈，我们已收到')
+    } catch (reason) { notify(reason.message) } finally { setSubmitting(false) }
   }
-  return <main className="account-subpage"><button className="subpage-back" onClick={back}><ArrowLeft size={19}/> 返回</button><header className="subpage-title"><i className="help-color"><HelpCircle size={27}/></i><div><h1>帮助与反馈</h1><p>使用帮助与意见反馈</p></div></header><section className="account-section"><h2>常见问题</h2><div className="faq-list">{faqs.map(([question,answer],index) => <article className={openFaq === index ? 'open' : ''} key={question}><button aria-expanded={openFaq === index} onClick={() => setOpenFaq(current => current === index ? -1 : index)}><span>{question}</span><ChevronDown size={18}/></button>{openFaq === index && <p>{answer}</p>}</article>)}</div></section><section className="account-section feedback-section"><h2>意见反馈</h2><p className="section-caption">你的建议会帮助我们持续改进产品体验</p><form onSubmit={submit}><div className="feedback-categories">{['功能建议','数据问题','使用问题','其他'].map(item => <button type="button" className={category === item ? 'active' : ''} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div><label><span>反馈内容</span><textarea maxLength="500" placeholder="请描述遇到的问题或你的建议" value={message} onChange={event => setMessage(event.target.value)}/><small>{message.length}/500</small></label><label><span>联系方式（选填）</span><div className="feedback-contact"><Mail size={17}/><input placeholder="微信号或邮箱" value={contact} onChange={event => setContact(event.target.value)}/></div></label><button className="feedback-submit" type="submit"><Send size={17}/> 提交反馈</button></form></section></main>
+  return <main className="account-subpage"><button className="subpage-back" onClick={back}><ArrowLeft size={19}/> 返回</button><header className="subpage-title"><i className="help-color"><HelpCircle size={27}/></i><div><h1>帮助与反馈</h1><p>使用帮助与意见反馈</p></div></header><section className="account-section"><h2>常见问题</h2><div className="faq-list">{faqs.map(([question,answer],index) => <article className={openFaq === index ? 'open' : ''} key={question}><button aria-expanded={openFaq === index} onClick={() => setOpenFaq(current => current === index ? -1 : index)}><span>{question}</span><ChevronDown size={18}/></button>{openFaq === index && <p>{answer}</p>}</article>)}</div></section><section className="account-section feedback-section"><h2>意见反馈</h2><p className="section-caption">你的建议会帮助我们持续改进产品体验</p><form onSubmit={submit}><div className="feedback-categories">{['功能建议','数据问题','使用问题','其他'].map(item => <button type="button" className={category === item ? 'active' : ''} onClick={() => setCategory(item)} key={item}>{item}</button>)}</div><label><span>反馈内容</span><textarea maxLength="500" placeholder="请描述遇到的问题或你的建议" value={message} onChange={event => setMessage(event.target.value)}/><small>{message.length}/500</small></label><label><span>联系方式（选填）</span><div className="feedback-contact"><Mail size={17}/><input maxLength="120" placeholder="微信号或邮箱" value={contact} onChange={event => setContact(event.target.value)}/></div></label><button className="feedback-submit" type="submit" disabled={submitting}><Send size={17}/>{submitting?'提交中…':'提交反馈'}</button></form></section></main>
 }
 
 function AboutPage({ back }) {
-  return <main className="account-subpage"><button className="subpage-back" onClick={back}><ArrowLeft size={19}/> 返回</button><header className="about-hero"><div className="about-logo">彩</div><h1>彩数通</h1><p>数字生活助手</p><span>当前版本 1.0.0</span></header><section className="account-section about-copy"><h2>关于彩数通</h2><p>彩数通是一款开奖数据整理与历史统计工具，提供开奖查询、号码分布、走势图和个人方案管理等功能。</p><p>我们坚持清晰、克制的数据呈现，不提供彩票销售、代购服务，也不承诺或暗示提高中奖概率。</p></section><section className="account-section about-links"><details><summary><i className="blue"><Database size={18}/></i><span><b>数据来源与声明</b><small>开奖信息及使用边界</small></span><ChevronDown size={18}/></summary><div>开奖信息来自公开数据接口，仅供查询参考。数据可能因网络或数据源原因延迟，请以福利彩票、体育彩票官方公布结果为准。</div></details><details><summary><i className="purple"><FileText size={18}/></i><span><b>用户协议</b><small>服务规则与用户责任</small></span><ChevronDown size={18}/></summary><div>用户应合法、理性地使用本工具，不得利用服务开展售彩、代购、赌博或其他违法活动。历史统计结果不构成投注建议。</div></details><details><summary><i className="green"><ShieldCheck size={18}/></i><span><b>隐私政策</b><small>信息收集与安全说明</small></span><ChevronDown size={18}/></summary><div>我们遵循最小必要原则处理账户信息。微信授权仅用于账户识别和方案同步，不会自动发布内容；你可以退出登录并申请删除账户数据。</div></details></section><p className="about-footer">© 2026 彩数通 · 数据工具仅供参考，请理性使用</p></main>
+  useEffect(() => { const label=document.querySelector('.about-hero span'); if (label) label.textContent=`当前版本 ${packageMetadata.version}` }, [])
+  return <main className="account-subpage"><button className="subpage-back" onClick={back}><ArrowLeft size={19}/> 返回</button><header className="about-hero"><img className="about-logo" src="/caiyan-logo.png" alt="彩研通"/><h1>彩研通</h1><p>数字生活助手</p><span>当前版本 1.0.0</span></header><section className="account-section about-copy"><h2>关于彩研通</h2><p>彩研通是一款开奖数据整理与历史统计工具，提供开奖查询、号码分布、走势图和个人方案管理等功能。</p><p>我们坚持清晰、克制的数据呈现，不提供彩票销售、代购服务，也不承诺或暗示提高中奖概率。</p></section><section className="account-section about-links"><details><summary><i className="blue"><Database size={18}/></i><span><b>数据来源与声明</b><small>开奖信息及使用边界</small></span><ChevronDown size={18}/></summary><div>开奖信息来自公开数据接口，仅供查询参考。数据可能因网络或数据源原因延迟，请以福利彩票、体育彩票官方公布结果为准。</div></details><details><summary><i className="purple"><FileText size={18}/></i><span><b>用户协议</b><small>服务规则与用户责任</small></span><ChevronDown size={18}/></summary><div>用户应合法、理性地使用本工具，不得利用服务开展售彩、代购、赌博或其他违法活动。历史统计结果不构成投注建议。</div></details><details><summary><i className="green"><ShieldCheck size={18}/></i><span><b>隐私政策</b><small>信息收集与安全说明</small></span><ChevronDown size={18}/></summary><div>我们遵循最小必要原则处理账户信息。微信授权仅用于账户识别和方案同步，不会自动发布内容；你可以退出登录并申请删除账户数据。</div></details></section><p className="about-footer">© 2026 彩研通 · 数据工具仅供参考，请理性使用</p></main>
 }
 
-function ProfilePage({ member, onLogin, onLogout, notify, goPlans, openHelp, openAbout }) {
-  if (!member) return <main className="profile-page"><div className="profile-title"><h1>我的</h1><p>登录后管理个人资料和服务</p></div><PhoneLogin notify={notify} onLogin={onLogin}/><section className="profile-menu public-profile-menu"><button onClick={openHelp}><i style={{backgroundColor:'#f3aa19'}}><HelpCircle size={19}/></i><span><b>帮助与反馈</b><small>使用帮助与意见反馈</small></span><ChevronRight size={19}/></button><button onClick={openAbout}><i style={{backgroundColor:'#49a9ee'}}><Info size={19}/></i><span><b>关于彩数通</b><small>版本信息与服务协议</small></span><ChevronRight size={19}/></button></section><p className="profile-disclaimer">手机号仅用于账户验证和服务通知</p></main>
+function SecurityPage({ member, back, onLogout, onDeleteData, notify, planCount }) {
+  const device = /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent) ? '移动设备' : '电脑浏览器'
+  const loginTime = member?.loggedAt ? new Date(member.loggedAt).toLocaleString('zh-CN') : '本次登录'
+  const expiresAt = member?.expiresAt ? new Date(Number(member.expiresAt)).toLocaleString('zh-CN') : '登录后30天'
+  const changeEmail = () => notify('请先退出登录，再使用新邮箱验证码登录')
+  const removeData = () => {
+    if (window.confirm('确认删除本设备上的账户信息和已保存方案吗？此操作无法撤销。')) onDeleteData()
+  }
+  return <main className="account-subpage security-page"><button className="subpage-back" onClick={back}><ArrowLeft size={19}/> 返回</button><header className="subpage-title"><i className="security-color"><ShieldCheck size={27}/></i><div><h1>账户与安全</h1><p>邮箱、登录设备与隐私</p></div></header>
+    <section className="account-section security-section"><h2>账户邮箱</h2><div className="security-row"><i className="security-icon green"><Mail size={19}/></i><span><b>{member?.email || '未绑定邮箱'}</b><small>已通过邮箱验证码验证</small></span><button onClick={changeEmail}>更换邮箱</button></div></section>
+    <section className="account-section security-section"><h2>登录设备</h2><div className="security-row"><i className="security-icon blue"><Smartphone size={19}/></i><span><b>{device}</b><small>当前设备 · {loginTime}</small></span><em>在线</em></div><p className="security-caption">本设备将在 {expiresAt} 前保持登录，最长30天。主动退出、删除浏览器数据或到期后，需要重新获取邮箱验证码。</p><button className="security-outline" onClick={onLogout}><LogOut size={17}/> 退出当前设备</button></section>
+    <section className="account-section security-section"><h2>隐私与本地数据</h2><div className="security-data"><div><span>已保存方案</span><b>{planCount} 条</b></div><div><span>账户资料</span><b>邮箱与登录状态</b></div><div><span>服务端数据</span><b>验证码记录与主动反馈</b></div></div><p className="security-caption">走势图与开奖查询无需读取通讯录、定位、相册或其他与功能无关的信息。</p></section>
+    <section className="account-section security-section security-danger"><h2>删除本地账户数据</h2><p>清除当前设备上的登录信息、已保存方案和匿名访问标识。已提交的意见反馈不会自动删除，如需删除可通过“帮助与反馈”联系我们。</p><button onClick={removeData}><Trash2 size={17}/> 删除本设备数据</button></section>
+    <p className="about-footer">账户安全操作不会发布任何公开内容</p>
+  </main>
+}
+
+function ProfilePage({ member, onLogin, onLogout, notify, goPlans, openHelp, openAbout, openSecurity }) {
+  if (!member) return <main className="profile-page"><EmailLogin notify={notify} onLogin={onLogin}/><section className="profile-menu public-profile-menu"><button onClick={openHelp}><i style={{backgroundColor:'#f3aa19'}}><HelpCircle size={19}/></i><span><b>帮助与反馈</b><small>使用帮助与意见反馈</small></span><ChevronRight size={19}/></button><button onClick={openAbout}><i style={{backgroundColor:'#49a9ee'}}><Info size={19}/></i><span><b>关于彩研通</b><small>版本信息与服务协议</small></span><ChevronRight size={19}/></button></section><p className="profile-disclaimer">邮箱仅用于账户验证和服务通知</p></main>
   const items = [
     [Bookmark,'我的方案','查看已保存的选号方案','#4169f6',goPlans],
     [Download,'数据导出','会员可导出历史分析数据','#20b7d8'],
     [Settings,'数据设置','管理走势图与分析偏好','#7a6ff0'],
-    [ShieldCheck,'账户与安全','手机号、登录设备与隐私','#36c978'],
+    [ShieldCheck,'账户与安全','邮箱、登录设备与隐私','#36c978',openSecurity],
     [HelpCircle,'帮助与反馈','使用帮助与意见反馈','#f3aa19',openHelp],
-    [Info,'关于彩数通','版本信息与服务协议','#49a9ee',openAbout]
+    [Info,'关于彩研通','版本信息与服务协议','#49a9ee',openAbout]
   ]
-  return <main className="profile-page"><div className="profile-title"><h1>我的</h1></div><section className="profile-user"><div className="profile-avatar"><UserRound size={31}/></div><div><h2>{member.nickname || '彩友'}</h2><p>{maskPhone(member.phone)}</p></div><span>已登录</span></section><section className="member-banner"><div><span><Crown size={18}/> 彩数通会员</span><h2>解锁更多数据分析工具</h2><p>高级走势图 · K线分析 · 数据导出</p></div><button onClick={() => notify('会员功能即将开放')}>了解会员</button></section><section className="profile-menu">{items.map(([Icon,title,desc,color,action]) => <button onClick={action || (() => notify('功能正在建设中'))} key={title}><i style={{backgroundColor:color}}><Icon size={19}/></i><span><b>{title}</b><small>{desc}</small></span><ChevronRight size={19}/></button>)}</section><button className="logout-button" onClick={onLogout}><LogOut size={18}/> 退出登录</button><p className="profile-disclaimer">数据工具仅供参考，请理性使用</p></main>
+  return <main className="profile-page"><section className="profile-user"><div className="profile-avatar"><UserRound size={31}/></div><div><h2>{member.nickname || '彩友'}</h2><p>{maskEmail(member.email)}</p></div><span>已登录</span></section><section className="member-banner"><div><span><Crown size={18}/> 彩研通会员</span><h2>解锁更多数据分析工具</h2><p>高级走势图 · K线分析 · 数据导出</p></div><button onClick={() => notify('会员功能即将开放')}>了解会员</button></section><section className="profile-menu">{items.map(([Icon,title,desc,color,action]) => <button onClick={action || (() => notify('功能正在建设中'))} key={title}><i style={{backgroundColor:color}}><Icon size={19}/></i><span><b>{title}</b><small>{desc}</small></span><ChevronRight size={19}/></button>)}</section><button className="logout-button" onClick={onLogout}><LogOut size={18}/> 退出登录</button><p className="profile-disclaimer">数据工具仅供参考，请理性使用</p></main>
+}
+
+const adminLabels = {
+  home:'首页', random:'选号工具', plans:'我的方案', profile:'我的', detail:'详情页', trend:'走势图', history:'历史开奖', rules:'玩法规则',
+  nav_click:'底部导航', open_detail:'打开详情', open_trend:'打开走势图', open_history:'打开历史开奖', open_rules:'打开玩法规则', random_generate:'随机生成', save_plan:'保存方案', member_login:'用户登录', export_chart:'导出走势图',
+  fc3d:'福彩3D', ssq:'双色球', dlt:'大乐透', pl3:'排列三', pl5:'排列五', qxc:'七星彩', qlc:'七乐彩', klb:'快乐8', mobile:'手机端', desktop:'电脑端'
+}
+const adminName = value => adminLabels[value] || value || '其他'
+const adminNumber = value => Number(value || 0).toLocaleString('zh-CN')
+
+function AdminList({ title, rows, empty = '暂无数据' }) {
+  const max = Math.max(1,...rows.map(row => Number(row.value || 0)))
+  return <section className="admin-panel"><h2>{title}</h2>{rows.length ? <div className="admin-ranking">{rows.map((row,index) => <div key={`${row.name}-${index}`}><span>{adminName(row.name)}</span><i><em style={{width:`${Number(row.value || 0) / max * 100}%`}}/></i><b>{adminNumber(row.value)}</b></div>)}</div> : <p className="admin-empty">{empty}</p>}</section>
+}
+
+const feedbackStatusLabels = { pending:'待处理', processing:'处理中', resolved:'已解决' }
+
+function AdminFeedback({ rows, filter, setFilter, onSave, saving }) {
+  const [notes,setNotes] = useState({})
+  useEffect(() => { setNotes(Object.fromEntries(rows.map(row => [row.id,row.admin_note || '']))) },[rows])
+  return <section className="admin-panel admin-feedback"><header><div><h2>用户反馈</h2><p>反馈内容、处理状态与内部回复备注</p></div><div className="admin-feedback-filters">{[['all','全部'],...Object.entries(feedbackStatusLabels)].map(([value,label]) => <button className={filter===value?'active':''} onClick={()=>setFilter(value)} key={value}>{label}</button>)}</div></header>{rows.length ? <div className="admin-feedback-list">{rows.map(row => <article key={row.id}><div className="admin-feedback-meta"><span>{row.category}</span><time>{new Date(`${row.created_at}Z`).toLocaleString('zh-CN')}</time></div><p>{row.message}</p>{row.contact && <small>联系方式：{row.contact}</small>}<div className="admin-feedback-actions"><select value={row.status} onChange={event=>onSave(row.id,event.target.value,notes[row.id] || '')} disabled={saving===row.id}>{Object.entries(feedbackStatusLabels).map(([value,label])=><option value={value} key={value}>{label}</option>)}</select><input maxLength="1000" placeholder="填写回复备注（仅管理员可见）" value={notes[row.id] || ''} onChange={event=>setNotes(current=>({...current,[row.id]:event.target.value}))}/><button onClick={()=>onSave(row.id,row.status,notes[row.id] || '')} disabled={saving===row.id}>{saving===row.id?'保存中…':'保存备注'}</button></div></article>)}</div> : <p className="admin-empty">当前筛选下暂无反馈</p>}</section>
+}
+
+function AdminDashboard() {
+  const [days,setDays] = useState(30), [data,setData] = useState(null), [loading,setLoading] = useState(true), [error,setError] = useState(''), [needsLogin,setNeedsLogin] = useState(false)
+  const [feedback,setFeedback] = useState([]), [feedbackFilter,setFeedbackFilter] = useState('all'), [feedbackSaving,setFeedbackSaving] = useState(null)
+  const load = async () => {
+    setLoading(true); setError('')
+    try { const response = await fetch(`/api/admin/stats?days=${days}`,{ credentials:'include' }); const body = await response.json(); if (response.status === 401) { setNeedsLogin(true); setData(null); return } if (!response.ok) throw new Error(body.error || '后台数据加载失败'); setNeedsLogin(false); setData(body) } catch (reason) { setError(reason.message) } finally { setLoading(false) }
+  }
+  useEffect(() => { load() },[days])
+  const loadFeedback = async () => {
+    try { const response = await fetch(`/api/admin/feedback?status=${feedbackFilter}`,{ credentials:'include' }); const body = await response.json(); if (response.status===401) return setNeedsLogin(true); if (!response.ok) throw new Error(body.error || '反馈加载失败'); setFeedback(body.feedback || []) } catch (reason) { setError(reason.message) }
+  }
+  useEffect(() => { if (!needsLogin) loadFeedback() },[feedbackFilter,needsLogin])
+  const saveFeedback = async (id,status,adminNote) => {
+    setFeedbackSaving(id)
+    try { const response = await fetch('/api/admin/feedback',{ method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,status,adminNote}) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || '反馈保存失败'); await loadFeedback() } catch (reason) { setError(reason.message) } finally { setFeedbackSaving(null) }
+  }
+  const logoutAdmin = async () => { await fetch('/api/admin/logout',{ method:'POST',credentials:'include' }); setData(null); setNeedsLogin(true) }
+  const series = data?.series || [], maxViews = Math.max(1,...series.map(row => Number(row.views || 0)))
+  const summary = [
+    ['累计浏览量',data?.totals?.views,Eye,'blue'], ['今日浏览量',data?.today?.views,Activity,'purple'], ['累计用户量',data?.totals?.visitors,Users,'green'], ['今日用户量',data?.today?.visitors,Users,'cyan'], ['累计点击量',data?.totals?.clicks,MousePointerClick,'orange'], ['今日点击量',data?.today?.clicks,MousePointerClick,'red']
+  ]
+  if (needsLogin) return <AdminLogin onSuccess={load}/>
+  return <main className="admin-page"><header className="admin-header"><div><span><LayoutDashboard size={20}/> 彩研通数据中心</span><h1>运营概览</h1><p>匿名使用统计与用户主动提交的意见反馈</p></div><div className="admin-header-actions"><button onClick={()=>{load();loadFeedback()}} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17}/>刷新数据</button><button onClick={logoutAdmin}><LogOut size={17}/>退出</button></div></header>
+    <div className="admin-period">{[7,30,90].map(value => <button className={days === value ? 'active' : ''} onClick={() => setDays(value)} key={value}>近 {value} 天</button>)}</div>
+    {error ? <section className="admin-auth-state"><ShieldCheck size={34}/><h2>数据加载失败</h2><p>{error}</p><button onClick={load}>重新加载</button></section> : <>{<div className="admin-summary">{summary.map(([label,value,Icon,color]) => <article className={color} key={label}><i><Icon size={19}/></i><span>{label}</span><b>{loading && !data ? '--' : adminNumber(value)}</b></article>)}</div>}
+      <section className="admin-panel admin-trend"><header><div><h2>访问趋势</h2><p>每日页面浏览量</p></div><span>近 {days} 天</span></header><div className="admin-bars">{series.map(row => <div title={`${row.day}：${row.views || 0}次`} key={row.day}><i style={{height:`${Math.max(4,Number(row.views || 0) / maxViews * 100)}%`}}/><small>{row.day.slice(5)}</small></div>)}</div></section>
+      <div className="admin-grid"><AdminList title="功能点击排行" rows={data?.events || []}/><AdminList title="页面浏览排行" rows={data?.pages || []}/><AdminList title="彩种使用排行" rows={data?.games || []}/><AdminList title="访问设备" rows={data?.devices || []}/></div>
+      <AdminFeedback rows={feedback} filter={feedbackFilter} setFilter={setFeedbackFilter} onSave={saveFeedback} saving={feedbackSaving}/>
+      <p className="admin-updated">数据生成于 {data?.generatedAt ? new Date(data.generatedAt).toLocaleString('zh-CN') : '--'}</p></>}
+  </main>
+}
+
+function AdminLogin({ onSuccess }) {
+  const [email,setEmail] = useState(''), [password,setPassword] = useState(''), [error,setError] = useState(''), [submitting,setSubmitting] = useState(false)
+  const submit = async event => {
+    event.preventDefault(); setSubmitting(true); setError('')
+    try { const response = await fetch('/api/admin/login',{ method:'POST',credentials:'include',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({ email,password }) }); const body = await response.json(); if (!response.ok) throw new Error(body.error || '登录失败'); await onSuccess() } catch (reason) { setError(reason.message) } finally { setSubmitting(false) }
+  }
+  return <main className="admin-login-page"><section className="admin-login-card"><div className="admin-login-logo"><ShieldCheck size={28}/></div><span>彩研通数据中心</span><h1>管理员登录</h1><p>仅限授权管理员访问运营数据</p><form onSubmit={submit}><label><span>管理员邮箱</span><input type="email" autoComplete="username" inputMode="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="请输入管理员邮箱" required/></label><label><span>密码</span><input type="password" autoComplete="current-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="请输入密码" required/></label>{error && <div className="admin-login-error">{error}</div>}<button type="submit" disabled={submitting}>{submitting ? '正在验证…' : '登录'}</button></form><small>登录状态将在 12 小时后自动失效</small></section></main>
 }
 
 function App() {
-  const [tab,setTab] = useState('home'), [view,setView] = useState(null), [plans,setPlans] = useState(() => { try { return JSON.parse(localStorage.getItem(storageKey)) || [] } catch { return [] } }), [toast,setToast] = useState(''), [member,setMember] = useState(() => { try { return JSON.parse(localStorage.getItem(memberStorageKey)) } catch { return null } })
+  const [initialNavigation] = useState(() => readNavigationState())
+  const [tab,setTab] = useState(initialNavigation?.tab || 'home'), [view,setView] = useState(initialNavigation?.view || null), [viewStack,setViewStack] = useState(initialNavigation?.viewStack || []), [plans,setPlans] = useState(() => { try { return JSON.parse(localStorage.getItem(storageKey)) || [] } catch { return [] } }), [toast,setToast] = useState(''), [member,setMember] = useState(readStoredMember)
   const persist = next => { setPlans(next); localStorage.setItem(storageKey, JSON.stringify(next)) }
   const notify = message => { setToast(message); setTimeout(() => setToast(''),2200) }
-  const save = plan => { persist([plan,...plans].slice(0,20)); notify('已保存在“我的方案”') }
-  const login = next => { setMember(next); localStorage.setItem(memberStorageKey, JSON.stringify(next)); notify('登录成功') }
+  const save = plan => {
+    if (!member) {
+      setView(null); setViewStack([]); setTab('profile'); scrollTo(0,0)
+      notify('请先登录后保存方案')
+      return false
+    }
+    persist([plan,...plans].slice(0,20)); trackAnalytics('save_plan',{page:tab,game:rules.find(rule => plan.planName.startsWith(rule.name))?.key}); notify('已保存在“我的方案”'); return true
+  }
+  const login = next => { const canExport = next?.email?.toLowerCase() === '1226779246@qq.com'; const loggedIn={...next,canExport,isAdmin:canExport,loggedAt:new Date().toISOString(),expiresAt:Date.now()+memberSessionDays*24*60*60*1000}; setMember(loggedIn); localStorage.setItem(memberStorageKey, JSON.stringify(loggedIn)); trackAnalytics('member_login',{page:'profile'}); notify('登录成功，30天内免登录') }
   const logout = () => { setMember(null); localStorage.removeItem(memberStorageKey); notify('已退出登录') }
-  const nav = k => { setTab(k); setView(null); scrollTo(0,0) }
-  const showView = next => { setView(next); scrollTo(0,0) }
+  const deleteLocalAccountData = () => { setMember(null); setPlans([]); [memberStorageKey,storageKey,analyticsVisitorKey,'caishutong-feedback'].forEach(key=>localStorage.removeItem(key)); sessionStorage.removeItem(analyticsSessionKey); setView(null); setViewStack([]); setTab('profile'); notify('本设备账户数据已删除') }
+  const nav = k => { trackAnalytics('nav_click',{page:k}); setTab(k); setView(null); setViewStack([]); scrollTo(0,0) }
+  const showView = next => { trackAnalytics(`open_${next.type}`,{page:next.type,game:next.item?.game}); setViewStack(stack => [...stack,{ tab, view }]); setView(next); scrollTo(0,0) }
+  const replaceView = next => { trackAnalytics(`open_${next.type}`,{page:next.type,game:next.item?.game}); setView(next); scrollTo(0,0) }
+  const goBack = () => { const previous = viewStack.at(-1); if (previous) { setTab(previous.tab); setView(previous.view); setViewStack(viewStack.slice(0,-1)) } else { setView(null); setViewStack([]) } scrollTo(0,0) }
   const navItems = [['home',Home,'首页'],['random',Dices,'选号工具'],['plans',Bookmark,'我的方案'],['profile',UserRound,'我的']]
   const activeNavIndex = Math.max(0, navItems.findIndex(([key]) => key === tab))
-  const keepTabActive = !view || ['help','about'].includes(view.type)
-  return <div className="app-shell"><div className="brand"><span>彩</span><b>彩数通</b><small>数字生活助手</small></div><div className="content">{view?.type === 'detail' ? <Detail {...view} back={() => setView(null)}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={() => setView(null)}/> : view?.type === 'help' ? <HelpPage back={() => setView(null)} notify={notify}/> : view?.type === 'about' ? <AboutPage back={() => setView(null)}/> : tab === 'home' ? <HomePage open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})}/>}</div>
+  const keepTabActive = !view || ['help','about','security'].includes(view.type)
+  useEffect(() => { trackAnalytics('page_view',{ page:view?.type || tab, game:view?.item?.game }) },[tab,view?.type,view?.item?.game])
+  useEffect(() => {
+    const active = Boolean(view || tab !== 'home' || viewStack.length)
+    try {
+      if (active) sessionStorage.setItem(navigationStorageKey, JSON.stringify({ tab, view, viewStack }))
+      else sessionStorage.removeItem(navigationStorageKey)
+      const url = new URL(location.href)
+      if (active) url.searchParams.set('nav','1')
+      else url.searchParams.delete('nav')
+      history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+    } catch {}
+  }, [tab, view, viewStack])
+  useEffect(() => {
+    let startY = 0, pulling = false, distance = 0
+    const indicator = document.createElement('div')
+    indicator.className = 'pull-refresh-indicator'
+    indicator.textContent = '下拉刷新'
+    document.body.appendChild(indicator)
+    const reset = () => { indicator.classList.remove('visible','ready'); indicator.style.transform = '' }
+    const onStart = event => { if (window.scrollY <= 0 && event.touches.length === 1) { startY = event.touches[0].clientY; pulling = true } }
+    const onMove = event => {
+      if (!pulling) return
+      distance = Math.max(0, event.touches[0].clientY - startY)
+      if (!distance) return
+      const offset = Math.min(72, distance * .42)
+      indicator.style.transform = `translate(-50%,${offset - 58}px)`
+      indicator.classList.add('visible')
+      indicator.classList.toggle('ready', distance >= 96)
+      indicator.textContent = distance >= 96 ? '松开即可刷新' : '下拉刷新'
+    }
+    const onEnd = () => {
+      if (!pulling) return
+      pulling = false
+      if (distance >= 96) { indicator.textContent = '正在刷新…'; indicator.classList.add('visible'); setTimeout(() => location.reload(), 120) } else reset()
+      distance = 0
+    }
+    window.addEventListener('touchstart',onStart,{ passive:true })
+    window.addEventListener('touchmove',onMove,{ passive:true })
+    window.addEventListener('touchend',onEnd,{ passive:true })
+    window.addEventListener('touchcancel',onEnd,{ passive:true })
+    return () => { window.removeEventListener('touchstart',onStart); window.removeEventListener('touchmove',onMove); window.removeEventListener('touchend',onEnd); window.removeEventListener('touchcancel',onEnd); indicator.remove() }
+  },[])
+  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content">{view?.type === 'detail' ? <Detail {...view} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div>
     <nav className="bottom-nav" aria-label="主导航" style={{'--nav-index':activeNavIndex}}><i className="nav-selection" aria-hidden="true"/>{navItems.map(([k,Icon,label]) => <button className={tab===k&&keepTabActive?'active':''} aria-current={tab===k&&keepTabActive?'page':undefined} onClick={() => nav(k)} key={k}><Icon/><span>{label}</span></button>)}</nav>{toast && <div className="toast">{toast}</div>}</div>
 }
-createRoot(document.getElementById('root')).render(<App/>)
+createRoot(document.getElementById('root')).render(location.pathname.startsWith('/admin') ? <AdminDashboard/> : <App/>)

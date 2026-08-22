@@ -1,0 +1,18 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "caishutong-web",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-08-08",
+  "vars": {
+    "ADMIN_EMAIL": "1226779246@qq.com",
+    "EMAIL_FROM": "彩研通 <verify@mail.888888c.xyz>"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "caishutong-analytics",
+      "database_id": "e133bbbc-902d-4b37-8464-a086524e8f66",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
