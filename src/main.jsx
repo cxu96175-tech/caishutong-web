@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { Home, Dices, Bookmark, RefreshCw, ChevronRight, ChevronDown, Trash2, ArrowLeft, UserRound, Smartphone, Crown, Download, Settings, ShieldCheck, HelpCircle, Info, LogOut, Send, FileText, Database, Mail, Eye, MousePointerClick, Users, Activity, LayoutDashboard } from 'lucide-react'
-import { fetchRecords, gameOrder, generate, games, readRecordsCache, rules, shouldRefreshRecords } from './data'
+import { fetchHistory, fetchRecords, gameOrder, generate, games, readRecordsCache, rules, shouldRefreshRecords } from './data'
 import { playRules } from './playRules'
 import packageMetadata from '../package.json'
 import './styles.css'
@@ -448,27 +448,45 @@ function Kl8DataViews({ history }) {
   return <section className={`card trend-fold-card kl8-data-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><b>快乐8数据图表</b><small>基础矩阵与综合数据查阅</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls kl8-data-controls"><div className="kl8-view-tabs"><button className={view==='matrix'?'active':''} onClick={()=>setView('matrix')}>基础矩阵图</button><button className={view==='analytics'?'active':''} onClick={()=>setView('analytics')}>综合数据查阅表</button></div><div className="trend-filter-actions"><label className="period-filter"><span>期数</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[20,30,50,100].map(value=><option value={value} key={value}>近 {value} 期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'下载图片'}</button></div></div><div className="kl8-data-scroll"><div id="kl8-data-export">{view==='matrix'?<div className="kl8-matrix-grid">{rows.map(record=>{const hits=new Set(record.redBalls.map(Number));return <article className="kl8-matrix-item" key={record.id}><h4>{record.issue}期</h4><div>{Array.from({length:80},(_,index)=>index+1).map(number=><span className={hits.has(number)?'hit':''} key={number}>{String(number).padStart(2,'0')}</span>)}</div></article>})}</div>:<table className="kl8-analytics-table"><thead><tr><th>期号</th>{columns.map(([,label])=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(record=>{const data=metrics(record);return <tr key={record.id}><th>{record.issue}</th>{columns.map(([key])=><td key={key}>{data[key]}</td>)}</tr>})}</tbody></table>}</div></div></>}</section>
 }
 
-function HistoryList({ history, defaultExpanded = false, onOpen }) {
-  const [expanded, setExpanded] = useState(defaultExpanded)
+function HistoryList({ history, defaultExpanded = false, alwaysExpanded = false, showAll = false, onOpen }) {
+  const [expanded, setExpanded] = useState(defaultExpanded || alwaysExpanded)
   const [period, setPeriod] = useState(30)
   const [page, setPage] = useState(1)
-  const filtered = history.slice(0, period)
+  const filtered = showAll ? history : history.slice(0, period)
   const totalPages = Math.max(1, Math.ceil(filtered.length / 10))
-  const rows = filtered.slice((page - 1) * 10, page * 10)
+  const rows = showAll ? filtered : filtered.slice((page - 1) * 10, page * 10)
   const changePeriod = value => { setPeriod(value); setPage(1) }
-  return <section className={`card trend-history trend-fold-card ${expanded ? 'expanded' : ''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><b>历史开奖号码</b><small>近 {period} 期 · 每页10期</small></span><ChevronDown size={20}/></button>
-    {expanded && <div className="trend-history-content"><div className="history-head"><span>开奖明细</span><label className="period-filter"><span>期数</span><select value={period} onChange={event => changePeriod(Number(event.target.value))}>{[10,20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div>
+  return <section className={`card trend-history trend-fold-card ${expanded ? 'expanded' : ''}`}>{alwaysExpanded ? <div className="trend-collapse-toggle history-static-title"><span><b>历史开奖号码</b><small>共 {history.length} 期</small></span></div> : <button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><b>历史开奖号码</b><small>近 {period} 期 · 每页10期</small></span><ChevronDown size={20}/></button>}
+    {expanded && <div className="trend-history-content"><div className="history-head"><span>开奖明细</span>{!showAll && <label className="period-filter"><span>期数</span><select value={period} onChange={event => changePeriod(Number(event.target.value))}>{[10,20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label>}</div>
     <div className="history-list">{rows.map(record => <button type="button" className="history history-link" onClick={() => onOpen?.(record)} key={record.id}><span>第 {record.issue} 期</span><Balls small groups={[{ values: record.redBalls }, { values: record.blueBalls, accent: true }]}/></button>)}</div>
-    <div className="history-pagination"><button disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))}>上一页</button><span>{page} / {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))}>下一页</button></div>
+    {!showAll && <div className="history-pagination"><button disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))}>上一页</button><span>{page} / {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))}>下一页</button></div>}
     </div>}
   </section>
 }
 
 function HistoryPage({ item, all, back, onOpen }) {
-  const history = all.filter(record => record.game === item.game).slice(0, 50)
+  const initialHistory = useMemo(() => all.filter(record => record.game === item.game), [all, item.game])
+  const [history, setHistory] = useState(initialHistory)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    setHistory(initialHistory)
+    setLoading(true)
+    setError('')
+    fetchHistory(item.game).then(rows => {
+      if (active) setHistory(rows)
+    }).catch(() => {
+      if (active) setError('完整历史数据暂时不可用，当前显示已加载数据')
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+    return () => { active = false }
+  }, [initialHistory, item.game])
   return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>
     <div className="section-head page-title-compact"><div><h1>{item.name}历史开奖</h1><p>按期查看开奖号码</p></div><span className={`game-icon ${item.game}`}>{item.icon}</span></div>
-    <HistoryList history={history} defaultExpanded onOpen={onOpen}/>
+    {(loading || error) && <p className={`history-load-status ${error ? 'error' : ''}`}>{loading ? '正在加载全部历史开奖…' : error}</p>}
+    <HistoryList history={history} defaultExpanded alwaysExpanded showAll onOpen={record => onOpen?.(record, history)}/>
   </main>
 }
 
@@ -946,7 +964,7 @@ function App() {
     window.addEventListener('touchcancel',onEnd,{ passive:true })
     return () => { window.removeEventListener('touchstart',onStart); window.removeEventListener('touchmove',onMove); window.removeEventListener('touchend',onEnd); window.removeEventListener('touchcancel',onEnd); indicator.remove() }
   },[])
-  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content">{view?.type === 'detail' ? <Detail {...view} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div>
+  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content">{view?.type === 'detail' ? <Detail {...view} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={(record,history) => showView({type:'detail',item:record,all:history})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div>
     <nav className="bottom-nav" aria-label="主导航" style={{'--nav-index':activeNavIndex}}><i className="nav-selection" aria-hidden="true"/>{navItems.map(([k,Icon,label]) => <button className={tab===k&&keepTabActive?'active':''} aria-current={tab===k&&keepTabActive?'page':undefined} onClick={() => nav(k)} key={k}><Icon/><span>{label}</span></button>)}</nav>{toast && <div className="toast">{toast}</div>}</div>
 }
 createRoot(document.getElementById('root')).render(location.pathname.startsWith('/admin') ? <AdminDashboard/> : <App/>)

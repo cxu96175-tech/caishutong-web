@@ -3,6 +3,7 @@ const isLocalPreview = typeof window !== 'undefined' && ['localhost', '127.0.0.1
 export const API = isLocalPreview ? UPSTREAM_API : '/api'
 const recordsCacheKey = 'caiyan-records-cache-v1'
 const recordsCacheLifetime = 6 * 60 * 60 * 1000
+const historyCache = new Map()
 
 export function readRecordsCache() {
   try {
@@ -79,20 +80,37 @@ async function fetchWithTimeout(url, timeout = 10000) {
   }
 }
 
+function normalizeRecord(game, x) {
+  const meta = games[game]
+  const balls = (Array.isArray(x.numbers) ? x.numbers : String(x.numbers || '').split(/[\s,，+|]+/)).filter(Boolean).map(v => meta.single ? String(+v) : String(v).padStart(2, '0'))
+  const first = x.firstPrize || (x.prizeRows || []).find(p => p.level === '一等奖')
+  return { ...x, id: `${game}-${x.issue}`, game, name: meta.name, icon: meta.icon, drawTime: meta.time, redBalls: balls.slice(0, meta.red), blueBalls: balls.slice(meta.red, meta.red + meta.blue), firstPrizeText: first?.amount ? `单注${money(first.amount)}` : '--', saleAmountText: money(x.saleAmount), poolAmountText: x.poolApplicable === false ? '不适用' : money(x.poolAmount) }
+}
+
 export async function fetchRecords(limit = 50) {
   const results = await Promise.allSettled(gameOrder.map(async game => {
     const meta = games[game]
     const res = await fetchWithTimeout(`${API}/lottery?game=${meta.code}&limit=${limit}&v=18`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const json = await res.json()
-    return (json.records || []).map(x => {
-      const balls = (Array.isArray(x.numbers) ? x.numbers : String(x.numbers || '').split(/[\s,，+|]+/)).filter(Boolean).map(v => meta.single ? String(+v) : String(v).padStart(2, '0'))
-      const first = x.firstPrize || (x.prizeRows || []).find(p => p.level === '一等奖')
-      return { ...x, id: `${game}-${x.issue}`, game, name: meta.name, icon: meta.icon, drawTime: meta.time, redBalls: balls.slice(0, meta.red), blueBalls: balls.slice(meta.red, meta.red + meta.blue), firstPrizeText: first?.amount ? `单注${money(first.amount)}` : '--', saleAmountText: money(x.saleAmount), poolAmountText: x.poolApplicable === false ? '不适用' : money(x.poolAmount) }
-    })
+    return (json.records || []).map(x => normalizeRecord(game, x))
   }))
   const all = results.flatMap(x => x.status === 'fulfilled' ? x.value : [])
   if (!all.length) throw new Error('开奖数据暂时不可用')
   writeRecordsCache(all)
   return all
+}
+
+export async function fetchHistory(game) {
+  if (historyCache.has(game)) return historyCache.get(game)
+  const request = (async () => {
+    const res = await fetchWithTimeout(`/api/history?game=${encodeURIComponent(game)}&v=1`, 30000)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json = await res.json()
+    const records = (json.records || []).map(x => normalizeRecord(game, x))
+    if (!records.length) throw new Error('历史开奖数据为空')
+    return records
+  })()
+  historyCache.set(game, request)
+  try { return await request } catch (error) { historyCache.delete(game); throw error }
 }

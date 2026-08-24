@@ -89,6 +89,7 @@
 
 /* Shared paginated history list for detail and trend views. */
 .history-head{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:8px}.history-head h3{margin:0}.history-list{min-height:520px}.history-pagination{display:flex;align-items:center;justify-content:center;gap:14px;padding-top:16px;border-top:1px solid #eceef2}.history-pagination button{border:0;border-radius:999px;padding:8px 15px;background:#eef0f5;color:#4f535b;font-size:12px;font-weight:600;cursor:pointer}.history-pagination button:disabled{opacity:.38;cursor:not-allowed}.history-pagination span{min-width:44px;text-align:center;color:#8d9199;font-size:12px;font-variant-numeric:tabular-nums}
+.history-load-status{margin:-12px 4px 14px;color:#8d9199;font-size:12px;text-align:center}.history-load-status.error{color:#c17a22}
 @media(max-width:760px){.history-head{margin-bottom:6px}.history-list{min-height:500px}.history-pagination{gap:12px;padding-top:14px}.history-pagination button{min-width:72px;padding:9px 14px}}
 
 /* Shape badges and final trend-card spacing refinements. */
