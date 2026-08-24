@@ -9,8 +9,8 @@
 - 基线提交：`fecc7fc Release latest user interface and analytics functions`
 - 工作区状态：创建本文件前无未提交改动
 - 当前版本：`package.json` 中为 `1.2.1`
-- 当前阶段：阶段 3 — 线上导出版本核对
-- 阶段状态：已定位
+- 当前阶段：阶段 4 — 生产域名部署与核对
+- 阶段状态：已完成
 
 ## 项目范围
 
@@ -50,9 +50,17 @@
 - 线上确认：`https://888888c.xyz/` 仍引用旧资源 `index-CEPKKK5Z.js`。
 - 原因：顶部标题和参数的本地改动尚未提交/部署到用户端，线上仍运行旧版本。
 - 本次处理：仅完成只读核对，未修改程序、未部署。
-- 下一步：提交并部署包含导出头部逻辑的版本，再重新下载验收。
+- 处理结果：确认需使用生产分支 `main` 部署，不能只部署到 `Preview / HEAD`。
 
-### 阶段 3 — （待定义）
+### 阶段 3 — 生产域名部署与核对（已完成）
+
+- 相关提交：`e53fb37 Add export image title and parameters`。
+- 预览部署：`https://5af2c2d3.caishutong-web.pages.dev`（Preview / HEAD）。
+- 生产部署：`https://4ecc6715.caishutong-web.pages.dev`（Production / main）。
+- 用户端核对：`https://888888c.xyz/` 已引用新资源 `index-BY_t6YPF.js`。
+- 结果：用户端已切换到包含导出图片顶部标题和参数的版本。
+
+### 阶段 4 — （待定义）
 
 - 目标：
 - 完成内容：
