@@ -291,6 +291,10 @@ function TraditionalTrendTable({ game, history, save }) {
         cloneTarget.querySelectorAll('.trend-lines').forEach(element => { element.style.display = 'none' })
       } })
       if (!['dlt','kl8'].includes(game)) drawExportLines(canvas,targetWidth,targetHeight)
+      canvas = appendExportHeader(canvas, {
+        title: `${games[game]?.name || game}基础走势图`,
+        params: `期数：${rows.length}期 · 遗漏值：${showMisses ? '显示' : '隐藏'}${['ssq','dlt'].includes(game) ? ` · 连号标记：${showPatterns ? '显示' : '隐藏'}` : ''}`
+      })
       canvas = await appendExportWatermark(canvas)
       const link = document.createElement('a')
       link.download = `${games[game]?.name || game}-基础走势图-${rows.length}期.png`
@@ -316,6 +320,30 @@ function TraditionalTrendTable({ game, history, save }) {
     <div className="simulation-footer"><span>已选 <b>{selectedTotal}</b> 个，共 <b>{bets}</b> 注</span><label><input type="number" min="1" max="99" value={multiplier} onChange={event => setMultiplier(Math.max(1, Math.min(99, Number(event.target.value) || 1)))}/> 倍</label><strong>{bets * multiplier * 2} 元</strong><button onClick={() => setSimulation({})}>清空选号</button><button className="save-simulation" disabled={!bets} onClick={saveSimulation}>保存方案</button></div>
     </>}
   </section>
+}
+
+function appendExportHeader(canvas, { title = '走势图', params = '' } = {}) {
+  const headerHeight = Math.round(Math.max(110, Math.min(180, canvas.width * .045)))
+  const output = document.createElement('canvas')
+  output.width = canvas.width
+  output.height = canvas.height + headerHeight
+  const context = output.getContext('2d')
+  const padding = Math.round(Math.max(28, Math.min(56, canvas.width * .018)))
+  const titleSize = Math.round(Math.max(24, Math.min(42, canvas.width * .014)))
+  const paramsSize = Math.round(Math.max(15, Math.min(24, canvas.width * .007)))
+  context.fillStyle = '#fff'
+  context.fillRect(0, 0, output.width, output.height)
+  context.fillStyle = '#26282d'
+  context.font = `800 ${titleSize}px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif`
+  context.textBaseline = 'middle'
+  context.fillText(title, padding, headerHeight * .38)
+  context.fillStyle = '#737984'
+  context.font = `600 ${paramsSize}px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif`
+  context.fillText(params, padding, headerHeight * .72)
+  context.fillStyle = '#e8eaf0'
+  context.fillRect(0, headerHeight - 1, output.width, 1)
+  context.drawImage(canvas, 0, headerHeight)
+  return output
 }
 
 async function appendExportWatermark(canvas) {
@@ -344,13 +372,14 @@ async function appendExportWatermark(canvas) {
   return output
 }
 
-async function exportTrendElement(id, filename) {
+async function exportTrendElement(id, filename, exportMeta) {
   const target = document.getElementById(id)
   if (!target) return
   await document.fonts?.ready
   const { default:html2canvas } = await import('html2canvas')
   const captured = await html2canvas(target,{ backgroundColor:'#fff', scale:3, useCORS:true, logging:false, width:target.scrollWidth, height:target.scrollHeight, windowWidth:target.scrollWidth, windowHeight:target.scrollHeight })
-  const canvas = await appendExportWatermark(captured)
+  const withHeader = appendExportHeader(captured, exportMeta)
+  const canvas = await appendExportWatermark(withHeader)
   const link = document.createElement('a')
   link.download = filename
   link.href = canvas.toDataURL('image/png',1)
@@ -379,7 +408,7 @@ function DltHeatTrend({ history }) {
     const sample = chronological.slice(-analysis)
     return [...actualRows,{ record:{id:'dlt-next-period',issue:nextLotteryIssue(latest.issue)}, front:rank(sample,'redBalls',35,[12,12,11]), back:rank(sample,'blueBalls',12,[6,6]), frontHits:new Set(), backHits:new Set(), ratio:'--', forecast:true }]
   },[history,analysis,period])
-  const download = async () => { setExporting(true); try { await exportTrendElement('dlt-heat-export',`大乐透-冷热图-${analysis}期分析-${period}期.png`); trackAnalytics('export_chart',{page:'trend',game:'dlt',chart:'heat'}) } finally { setExporting(false) } }
+  const download = async () => { setExporting(true); try { await exportTrendElement('dlt-heat-export',`大乐透-冷热图-${analysis}期分析-${period}期.png`,{ title:'大乐透冷热图', params:`分析：${analysis}期 · 显示：${period}期` }); trackAnalytics('export_chart',{page:'trend',game:'dlt',chart:'heat'}) } finally { setExporting(false) } }
   const cells=(numbers,type,hits,prefix)=>numbers.map(number=><td className={`heat-number ${hits.has(number)?`hit ${type}`:''}`} key={`${prefix}-${type}-${number}`}>{String(number).padStart(2,'0')}</td>)
   return <section className={`card trend-fold-card heat-trend-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><TrendingUp size={18}/><b>冷热图</b><small>按频次降序 · 同频号码降序</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls heat-controls"><span>每行统计该期开奖前所选期数，再标注当期奖号</span><div className="trend-filter-actions"><label className="period-filter"><span>分析</span><select value={analysis} onChange={event=>setAnalysis(Number(event.target.value))}>{heatAnalysisPeriods.map(value=><option value={value} key={value}>{value}期</option>)}</select></label><label className="period-filter"><span>显示</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[30,50,100].map(value=><option value={value} key={value}>{value}期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'导出高清图'}</button></div></div><div className="heat-table-scroll"><table className="heat-table ranked-heat-table" id="dlt-heat-export"><thead><tr><th rowSpan="2">期号</th><th colSpan="35">前区</th><th rowSpan="2">三区比</th><th colSpan="12">后区</th></tr><tr><th className="hot-label" colSpan="12">热码(12)</th><th className="warm-label" colSpan="12">温码(12)</th><th className="cold-label" colSpan="11">冷码(11)</th><th className="hot-label" colSpan="6">热码(6)</th><th className="cold-label" colSpan="6">冷码(6)</th></tr></thead><tbody>{rows.map(row=><tr className={row.forecast?'forecast-row':''} key={row.record.id}><th>{row.record.issue}</th>{cells(row.front[0],'hot',row.frontHits,'front')}{cells(row.front[1],'warm',row.frontHits,'front')}{cells(row.front[2],'cold',row.frontHits,'front')}<td className="heat-ratio">{row.ratio}</td>{cells(row.back[0],'hot',row.backHits,'back')}{cells(row.back[1],'cold',row.backHits,'back')}</tr>)}{Array.from({length:2},(_,rowIndex)=><tr className="heat-blank-row" key={`dlt-blank-${rowIndex}`}><th>&nbsp;</th>{Array.from({length:35},(_,index)=><td className="heat-number" key={`front-${index}`}/>)}<td className="heat-ratio"/>{Array.from({length:12},(_,index)=><td className="heat-number" key={`back-${index}`}/>)}</tr>)}</tbody></table></div></>}</section>
 }
@@ -406,7 +435,7 @@ function SsqHeatTrend({ history }) {
     return [...actualRows,{ record:{ id:'ssq-next-period',issue:nextLotteryIssue(latest.issue) }, red:rank(nextSample,'redBalls',33,[11,11,11]), blue:rank(nextSample,'blueBalls',16,[8,8]), redHits:new Set(), blueHits:new Set(), zoneRatio:'--', sum:'--', extreme:'--', forecast:true }]
   },[history,analysis,period])
   const cells=(numbers,type,hits,prefix)=>numbers.map(number=><td className={`heat-number ${hits.has(number)?`hit ${type}`:''}`} key={`${prefix}-${type}-${number}`}>{String(number).padStart(2,'0')}</td>)
-  const download = async () => { setExporting(true); try { await exportTrendElement('ssq-heat-export',`双色球-冷热图-${analysis}期分析-${period}期.png`); trackAnalytics('export_chart',{page:'trend',game:'ssq',chart:'heat'}) } finally { setExporting(false) } }
+  const download = async () => { setExporting(true); try { await exportTrendElement('ssq-heat-export',`双色球-冷热图-${analysis}期分析-${period}期.png`,{ title:'双色球冷热图', params:`分析：${analysis}期 · 显示：${period}期` }); trackAnalytics('export_chart',{page:'trend',game:'ssq',chart:'heat'}) } finally { setExporting(false) } }
   return <section className={`card trend-fold-card heat-trend-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><TrendingUp size={18}/><b>冷热图</b><small>按频次降序 · 同频号码降序</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls heat-controls"><span>每行统计该期开奖前所选期数，再标注当期奖号</span><div className="trend-filter-actions"><label className="period-filter"><span>分析</span><select value={analysis} onChange={event=>setAnalysis(Number(event.target.value))}>{heatAnalysisPeriods.map(value=><option value={value} key={value}>{value}期</option>)}</select></label><label className="period-filter"><span>显示</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[30,50,100].map(value => <option value={value} key={value}>{value}期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'导出高清图'}</button></div></div><div className="heat-table-scroll"><table className="heat-table ranked-heat-table ssq-ranked-heat" id="ssq-heat-export"><thead><tr><th rowSpan="2">期号</th><th colSpan="33">红球</th><th rowSpan="2">三区比</th><th rowSpan="2">和值</th><th rowSpan="2">极值</th><th colSpan="16">蓝球</th></tr><tr><th className="hot-label" colSpan="11">热码(11)</th><th className="warm-label" colSpan="11">温码(11)</th><th className="cold-label" colSpan="11">冷码(11)</th><th className="hot-label" colSpan="8">热码(8)</th><th className="cold-label" colSpan="8">冷码(8)</th></tr></thead><tbody>{rows.map(row => <tr className={row.forecast?'forecast-row':''} key={row.record.id}><th>{row.record.issue}</th>{cells(row.red[0],'hot',row.redHits,'red')}{cells(row.red[1],'warm',row.redHits,'red')}{cells(row.red[2],'cold',row.redHits,'red')}<td className="heat-ratio">{row.zoneRatio}</td><td className="heat-stat-value">{row.sum}</td><td className="heat-stat-value">{row.extreme}</td>{cells(row.blue[0],'hot',row.blueHits,'blue')}{cells(row.blue[1],'cold',row.blueHits,'blue')}</tr>)}{Array.from({length:2},(_,rowIndex)=><tr className="heat-blank-row" key={`ssq-blank-${rowIndex}`}><th>&nbsp;</th>{Array.from({length:33},(_,index)=><td className="heat-number" key={`red-${index}`}/>) }<td className="heat-ratio"/><td className="heat-stat-value"/><td className="heat-stat-value"/>{Array.from({length:16},(_,index)=><td className="heat-number" key={`blue-${index}`}/>)}</tr>)}</tbody></table></div></>}</section>
 }
 
@@ -415,7 +444,7 @@ function Kl8DataViews({ history }) {
   const rows=useMemo(()=>history.slice(0,period).reverse(),[history,period])
   const metrics=record=>{const numbers=record.redBalls.map(Number).sort((a,b)=>a-b),sum=numbers.reduce((a,b)=>a+b,0),min=numbers[0],max=numbers.at(-1),span=max-min;let runs=0;for(let i=1;i<numbers.length;i++)if(numbers[i]===numbers[i-1]+1&&(i===1||numbers[i-1]!==numbers[i-2]+1))runs++;return{sum,span,max,min,sumTail:sum%10,average:Math.round(sum/numbers.length),sumSpan:sum+span,diffSpan:sum-span,tailSum:numbers.reduce((total,n)=>total+n%10,0),runs,tailGroups:new Set(numbers.map(n=>n%10)).size}}
   const columns=[['sum','和值'],['span','跨度'],['max','最大值'],['min','最小值'],['sumTail','和值尾'],['average','均值'],['sumSpan','和跨和'],['diffSpan','和跨差'],['tailSum','尾数和值'],['runs','连号组数'],['tailGroups','尾数组数']]
-  const download=async()=>{setExporting(true);try{await exportTrendElement('kl8-data-export',`快乐8-${view==='matrix'?'基础矩阵图':'综合数据表'}-${period}期.png`);trackAnalytics('export_chart',{page:'trend',game:'kl8',chart:view})}finally{setExporting(false)}}
+  const download=async()=>{setExporting(true);try{const title=`快乐8${view==='matrix'?'基础矩阵图':'综合数据查阅表'}`;await exportTrendElement('kl8-data-export',`${title}-${period}期.png`,{ title, params:`显示：${period}期` });trackAnalytics('export_chart',{page:'trend',game:'kl8',chart:view})}finally{setExporting(false)}}
   return <section className={`card trend-fold-card kl8-data-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><TableProperties size={18}/><b>快乐8数据图表</b><small>基础矩阵与综合数据查阅</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls kl8-data-controls"><div className="kl8-view-tabs"><button className={view==='matrix'?'active':''} onClick={()=>setView('matrix')}>基础矩阵图</button><button className={view==='analytics'?'active':''} onClick={()=>setView('analytics')}>综合数据查阅表</button></div><div className="trend-filter-actions"><label className="period-filter"><span>期数</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[20,30,50,100].map(value=><option value={value} key={value}>近 {value} 期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'下载图片'}</button></div></div><div className="kl8-data-scroll"><div id="kl8-data-export">{view==='matrix'?<div className="kl8-matrix-grid">{rows.map(record=>{const hits=new Set(record.redBalls.map(Number));return <article className="kl8-matrix-item" key={record.id}><h4>{record.issue}期</h4><div>{Array.from({length:80},(_,index)=>index+1).map(number=><span className={hits.has(number)?'hit':''} key={number}>{String(number).padStart(2,'0')}</span>)}</div></article>})}</div>:<table className="kl8-analytics-table"><thead><tr><th>期号</th>{columns.map(([,label])=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(record=>{const data=metrics(record);return <tr key={record.id}><th>{record.issue}</th>{columns.map(([key])=><td key={key}>{data[key]}</td>)}</tr>})}</tbody></table>}</div></div></>}</section>
 }
 
