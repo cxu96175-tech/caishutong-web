@@ -96,9 +96,10 @@
 - 完成内容：详情页新增管理员专属“导出图片”按钮；导出内容保持详情页主体布局，按当前页面可视宽度适配，取消额外顶部标题/参数栏；原页面卡片去掉描边，分隔线只在导出克隆画布中临时添加；沿用白底水印和现有 PNG 下载流程；普通用户不显示入口；不改动 `/admin/` 统计与反馈页面。
 - 相关文件：`src/main.jsx`、`src/styles.css`。
 - 验证结果：`pnpm run build` 通过；`git diff --check` 通过；测试地址 HTTP 200；导出逻辑复用现有 `html2canvas` 高清导出与水印能力。
-- 相关提交：待本次发布提交。
+- 相关提交：`f939505 Remove game name from detail hero`。
 - 测试部署：`https://detail-export-test.caishutong-web.pages.dev`（Pages preview alias，2026-08-25，已更新详情导出布局、导出专属分隔线和详情页标题清理）。
 - 测试验证：测试地址 HTTP 200；最新资源为 `assets/index-4PzFEdCM.js`，已包含详情导出逻辑；管理员详情页导出与标题清理已通过用户验收。
+- 正式部署：`https://646e6118.caishutong-web.pages.dev`（Production / main）；`https://888888c.xyz` 已验证 HTTP 200 并引用 `assets/index-4PzFEdCM.js`。
 - 待办/风险：无；如后续调整详情导出布局，需继续先发测试版再更新正式版。
 
 ## 恢复工作流程
