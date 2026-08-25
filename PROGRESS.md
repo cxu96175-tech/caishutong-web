@@ -9,8 +9,8 @@
 - 基线提交：`fecc7fc Release latest user interface and analytics functions`
 - 工作区状态：创建本文件前无未提交改动
 - 当前版本：`package.json` 中为 `1.2.1`
-- 当前阶段：阶段 6 — 历史开奖完整列表
-- 阶段状态：已完成（已正式发布）
+- 当前阶段：阶段 7 — 管理员详情页导出
+- 阶段状态：开发完成，待用户验收
 
 ## 项目范围
 
@@ -88,6 +88,17 @@
 - 相关提交：`0df1230 Add full historical draw archive`。
 - 正式部署：Pages 部署别名 `https://81a4f706.caishutong-web.pages.dev`；生产分支别名 `https://head.caishutong-web.pages.dev`；用户端自定义域名 `https://888888c.xyz` 已验证返回本次构建资源。
 - 待办/风险：数据源为公开第三方归档，页面继续保留“以官方开奖结果为准”的提示；如源站调整文本格式，需同步更新解析器。
+
+### 阶段 7 — 管理员详情页导出（待验收）
+
+- 目标：允许现有管理员账号在彩种详情页导出本期数据、指标状态和胆码冷热宝内容。
+- 完成内容：详情页新增管理员专属“导出图片”按钮；导出内容保持详情页主体布局，按当前页面可视宽度适配，取消额外顶部标题/参数栏；原页面卡片去掉描边，分隔线只在导出克隆画布中临时添加；沿用白底水印和现有 PNG 下载流程；普通用户不显示入口；不改动 `/admin/` 统计与反馈页面。
+- 相关文件：`src/main.jsx`、`src/styles.css`。
+- 验证结果：`pnpm run build` 通过；`git diff --check` 通过；测试地址 HTTP 200；导出逻辑复用现有 `html2canvas` 高清导出与水印能力。
+- 相关提交：待用户验收后提交/部署。
+- 测试部署：`https://detail-export-test.caishutong-web.pages.dev`（Pages preview alias，2026-08-25，已更新导出布局与导出专属分隔线）。
+- 测试验证：测试地址 HTTP 200；部署资源已包含 `fitWidth`、`withHeader:false`、`addCardDividers` 与“导出图片”逻辑；正式域名未改动。
+- 待办/风险：需用管理员账号登录测试版，在详情页点击“导出图片”检查完整截图内容与下载文件；验收通过后再提交并正式部署。
 
 ## 恢复工作流程
 

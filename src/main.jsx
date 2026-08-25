@@ -372,14 +372,38 @@ async function appendExportWatermark(canvas) {
   return output
 }
 
-async function exportTrendElement(id, filename, exportMeta) {
+async function exportTrendElement(id, filename, exportMeta, captureOptions = {}) {
   const target = document.getElementById(id)
   if (!target) return
   await document.fonts?.ready
   const { default:html2canvas } = await import('html2canvas')
-  const captured = await html2canvas(target,{ backgroundColor:'#fff', scale:3, useCORS:true, logging:false, width:target.scrollWidth, height:target.scrollHeight, windowWidth:target.scrollWidth, windowHeight:target.scrollHeight })
-  const withHeader = appendExportHeader(captured, exportMeta)
-  const canvas = await appendExportWatermark(withHeader)
+  const fitWidth = captureOptions.fitWidth === true
+  const withHeader = captureOptions.withHeader !== false
+  const addCardDividers = captureOptions.addCardDividers === true
+  const captureWidth = Math.max(1, Math.round(fitWidth ? target.getBoundingClientRect().width : target.scrollWidth))
+  const captureHeight = Math.max(1, Math.round(target.scrollHeight))
+  const captured = await html2canvas(target,{ backgroundColor:'#fff', scale:3, useCORS:true, logging:false, width:captureWidth, height:captureHeight, windowWidth:captureWidth, windowHeight:captureHeight, onclone:clonedDocument => {
+    const cloneTarget = clonedDocument.getElementById(id)
+    if (!cloneTarget) return
+    if (fitWidth) {
+      cloneTarget.style.width = `${captureWidth}px`
+      cloneTarget.style.maxWidth = `${captureWidth}px`
+      cloneTarget.style.overflow = 'visible'
+    }
+    if (addCardDividers) {
+      const cards = [...cloneTarget.children].filter(element => element.classList.contains('card'))
+      cards.slice(1).forEach(card => {
+        const divider = clonedDocument.createElement('div')
+        divider.setAttribute('aria-hidden', 'true')
+        divider.style.height = '1px'
+        divider.style.margin = '0 10px'
+        divider.style.background = '#dfe3eb'
+        card.parentNode.insertBefore(divider, card)
+      })
+    }
+  } })
+  const content = withHeader ? appendExportHeader(captured, exportMeta) : captured
+  const canvas = await appendExportWatermark(content)
   const link = document.createElement('a')
   link.download = filename
   link.href = canvas.toDataURL('image/png',1)
@@ -665,17 +689,26 @@ function ColdHotCard({ game, history }) {
   return <section className="card cold-hot-card"><header><h3>胆码冷热宝</h3>{game === 'dlt' ? <label className="cold-hot-period"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[10,20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label> : <small>近 {result.period} 期</small>}</header><p>{result.note}</p>{result.sections.map(section => <div className="cold-hot-section" key={section.title || 'numbers'}>{section.title && <h4>{section.title}</h4>}<div className="cold-hot-groups">{section.groups.map(([label,rows],index) => <div className={`cold-hot-row level-${index}`} key={label}><b>{label}</b><div>{rows.map(row => <span title={`${row.value} 出现 ${row.count} 次`} key={row.value}><i className="cold-hot-number">{row.value}</i><small>{row.count}次</small></span>)}</div></div>)}</div></div>)}</section>
 }
 
-function Detail({ item, all, back, onSwitchGame, onOpen }) {
+function Detail({ item, all, back, onSwitchGame, onOpen, canExport = false }) {
   const gameHistory = all.filter(r => r.game === item.game)
   const history = gameHistory.slice(0, 50)
   const currentIndex = gameHistory.findIndex(record => record.id === item.id || record.issue === item.issue)
   const previousRecord = currentIndex >= 0 ? gameHistory[currentIndex + 1] : undefined
   const nextGame = gameOrder[(gameOrder.indexOf(item.game) + 1) % gameOrder.length]
   const nextRecord = all.find(record => record.game === nextGame)
-  return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button><div className="detail-hero"><button type="button" className={`game-icon ${item.game} detail-game-switch`} title="点击切换彩种" aria-label="点击切换彩种" onClick={() => nextRecord && onSwitchGame?.(nextRecord, all)}>{item.icon}</button><h1>{item.name}</h1><p>第 {item.issue} 期 · {item.drawDate}</p><Balls groups={[{ values: item.redBalls }, { values: item.blueBalls, accent: true }]}/></div>
+  const [exporting, setExporting] = useState(false)
+  const downloadDetail = async () => {
+    if (exporting) return
+    setExporting(true)
+    try {
+      await exportTrendElement(`detail-export-${item.game}`, `${item.name}-详情-${item.issue}.png`, { title: `${item.name}详情`, params: `第 ${item.issue} 期 · ${item.drawDate}` }, { fitWidth: true, withHeader: false, addCardDividers: true })
+      trackAnalytics('export_chart', { page: 'detail', game: item.game, chart: 'detail' })
+    } finally { setExporting(false) }
+  }
+  return <main><div className="detail-toolbar"><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>{canExport && <button type="button" className="detail-export-button" disabled={exporting} onClick={downloadDetail}><Download size={15}/>{exporting ? '生成中…' : '导出图片'}</button>}</div><div className="detail-export-content" id={`detail-export-${item.game}`}><div className="detail-hero"><button type="button" className={`game-icon ${item.game} detail-game-switch`} title="点击切换彩种" aria-label="点击切换彩种" onClick={() => nextRecord && onSwitchGame?.(nextRecord, all)}>{item.icon}</button><h1>{item.name}</h1><p>第 {item.issue} 期 · {item.drawDate}</p><Balls groups={[{ values: item.redBalls }, { values: item.blueBalls, accent: true }]}/></div>
     <section className="card detail-card"><h3>本期数据</h3><div className="detail-grid"><span>本期销量<b>{item.saleAmountText}</b></span><span>奖池累计<b>{item.poolAmountText}</b></span><span>一等奖<b>{item.firstPrizeText}</b></span></div></section>
     <DrawMetrics game={item.game} record={item} previousRecord={previousRecord}/>
-    <ColdHotCard game={item.game} history={history}/>
+    <ColdHotCard game={item.game} history={history}/></div>
     <HistoryList history={history} onOpen={onOpen}/></main>
 }
 
@@ -964,7 +997,7 @@ function App() {
     window.addEventListener('touchcancel',onEnd,{ passive:true })
     return () => { window.removeEventListener('touchstart',onStart); window.removeEventListener('touchmove',onMove); window.removeEventListener('touchend',onEnd); window.removeEventListener('touchcancel',onEnd); indicator.remove() }
   },[])
-  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content">{view?.type === 'detail' ? <Detail {...view} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={(record,history) => showView({type:'detail',item:record,all:history})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div>
+  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content">{view?.type === 'detail' ? <Detail {...view} canExport={Boolean(member?.canExport)} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={(record,history) => showView({type:'detail',item:record,all:history})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div>
     <nav className="bottom-nav" aria-label="主导航" style={{'--nav-index':activeNavIndex}}><i className="nav-selection" aria-hidden="true"/>{navItems.map(([k,Icon,label]) => <button className={tab===k&&keepTabActive?'active':''} aria-current={tab===k&&keepTabActive?'page':undefined} onClick={() => nav(k)} key={k}><Icon/><span>{label}</span></button>)}</nav>{toast && <div className="toast">{toast}</div>}</div>
 }
 createRoot(document.getElementById('root')).render(location.pathname.startsWith('/admin') ? <AdminDashboard/> : <App/>)

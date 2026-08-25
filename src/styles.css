@@ -107,6 +107,16 @@
 .detail-card .detail-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media(max-width:760px){.detail-card{margin-top:4px}.detail-card .detail-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;font-size:12px}.detail-card .detail-grid span{min-width:0}.detail-card .detail-grid b{white-space:nowrap;font-size:13px}}
 
+/* Administrator-only detail export control. */
+.detail-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.detail-export-button{display:flex;align-items:center;gap:6px;height:34px;margin-top:-6px;border:1px solid #dfe2e8;border-radius:10px;padding:0 11px;background:#fff;color:#4f5560;font-size:11px;font-weight:700;cursor:pointer}
+.detail-export-button:hover{border-color:#3155ff;color:#3155ff}
+.detail-export-button:disabled{cursor:wait;opacity:.6}
+.detail-export-content{width:100%;max-width:100%;padding:1px 0 2px;background:transparent}
+.detail-export-content>.card{border:0;box-shadow:0 8px 24px rgba(35,42,61,.06)}
+.detail-card,.draw-metrics,.cold-hot-card{border:0}
+@media(max-width:760px){.detail-export-button{height:32px;padding:0 9px;font-size:10px}.detail-export-button svg{width:14px}.detail-export-content{padding-top:1px;overflow:hidden}}
+
 /* Current draw indicators for 3D, PL3 and PL5. */
 .draw-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px 26px;margin:14px 0 20px;padding:22px 24px}.draw-metric{display:flex;align-items:stretch;min-width:0;gap:13px}.draw-metric>i{flex:0 0 7px;width:7px;min-height:58px;border-radius:999px;background:var(--metric-color)}.draw-metric>span{display:flex;min-width:0;flex-direction:column;justify-content:center;gap:5px}.draw-metric b{overflow:hidden;color:#202124;font-size:24px;line-height:1.05;text-overflow:ellipsis;white-space:nowrap}.draw-metric:first-child b{color:var(--metric-color)}.draw-metric small{color:#999da4;font-size:13px;white-space:nowrap}
 @media(max-width:760px){.draw-metrics{gap:18px 10px;margin:12px 0 18px;padding:18px 14px}.draw-metric{gap:8px}.draw-metric>i{flex-basis:5px;width:5px;min-height:50px}.draw-metric b{font-size:19px}.draw-metric small{font-size:11px}}
