@@ -102,14 +102,15 @@
 - 正式部署：`https://646e6118.caishutong-web.pages.dev`（Production / main）；`https://888888c.xyz` 已验证 HTTP 200 并引用 `assets/index-4PzFEdCM.js`。
 - 待办/风险：无；如后续调整详情导出布局，需继续先发测试版再更新正式版。
 
-### 阶段 8 — 浏览器标签页 Logo（待验收）
+### 阶段 8 — 浏览器标签页 Logo（已完成）
 
 - 目标：将浏览器标签页默认地球图标替换为彩研通 Logo。
 - 完成内容：在入口 HTML 使用圆形 SVG favicon，直接内嵌现有 Logo 缩略图，避免浏览器不加载 SVG 外部图片；不改动页面内 Logo、管理后台或业务功能。
 - 相关文件：`index.html`、`public/caiyan-favicon.svg`、`dist/index.html`。
-- 验证结果：`pnpm run build`、`git diff --check` 通过；测试版页面 HTTP 200，favicon SVG 和源 Logo 均可访问。
+- 验证结果：`pnpm run build`、`git diff --check` 通过；测试版和生产页面 HTTP 200，生产 favicon SVG 返回 200 且内嵌 PNG 数据，无外部图片依赖。
 - 测试部署：`https://detail-export-test.caishutong-web.pages.dev`（本次修复部署资源 `https://79b07b24.caishutong-web.pages.dev`，2026-08-26）。
-- 待办/风险：浏览器可能缓存旧 favicon，验收时可使用硬刷新或新标签页确认；通过后再提交并正式部署。
+- 正式部署：`https://888888c.xyz`（本次发布资源 `https://c546f533.caishutong-web.pages.dev`，2026-08-26；提交 `019e6b9`）。
+- 待办/风险：浏览器可能缓存旧 favicon，验收时可使用硬刷新或新标签页确认；管理后台未改动。
 
 ## 恢复工作流程
 
