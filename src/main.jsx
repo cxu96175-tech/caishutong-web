@@ -40,8 +40,17 @@ const waitForPaint = () => new Promise(resolve => requestAnimationFrame(() => re
 
 function BatchExportWorkspace({ job }) {
   if (!job) return null
+  const renderJob = () => {
+    if (job.kind === 'trend') return <TraditionalTrendTable key={job.exportId} game={job.game} history={job.history} save={() => {}} initialExpanded initialShowMisses={job.showMisses} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
+    if (job.kind === 'heat') {
+      const HeatComponent = job.game === 'dlt' ? DltHeatTrend : SsqHeatTrend
+      return <HeatComponent key={job.exportId} history={job.history} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
+    }
+    if (job.kind === 'kl8') return <Kl8DataViews key={job.exportId} history={job.history} exportId={job.exportId} viewOverride={job.view} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
+    return <Detail key={job.exportId} item={job.item} all={job.all} back={() => {}} onSwitchGame={() => {}} onOpen={() => {}} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
+  }
   return <div className="batch-export-workspace" aria-hidden="true">
-    {job.kind === 'trend' ? <TraditionalTrendTable key={`${job.kind}-${job.game}`} game={job.game} history={job.history} save={() => {}} initialExpanded exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/> : <Detail key={`${job.kind}-${job.game}`} item={job.item} all={job.all} back={() => {}} onSwitchGame={() => {}} onOpen={() => {}} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>}
+    {renderJob()}
   </div>
 }
 
@@ -55,20 +64,35 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
   const exportBatch = async () => {
     if (!canExport || batchExporting || !latest.length) return
     const exportItems = gameOrder.map(game => ({ game, item:all.find(record => record.game === game) })).filter(entry => entry.item)
-    const total = exportItems.length * 2
+    const total = exportItems.reduce((count, { game }) => count + 3 + (['dlt','ssq'].includes(game) ? 1 : 0) + (game === 'kl8' ? 2 : 0), 0)
     setBatchExporting(true); setBatchProgress({ current:0, total })
     try {
       const histories = Object.fromEntries(await Promise.all(exportItems.map(async ({ game }) => {
         try { return [game, await fetchHistory(game)] } catch { return [game, all.filter(record => record.game === game)] }
       })))
       let current = 0
+      const runJob = job => new Promise(resolve => {
+        current += 1
+        setBatchProgress({ current, total })
+        setBatchJob({ ...job, onComplete:resolve })
+      })
       for (const { game, item } of exportItems) {
-        current += 1; setBatchProgress({ current, total })
-        await new Promise(resolve => setBatchJob({ kind:'trend', game, history:histories[game], exportId:`batch-trend-${game}`, filename:`${item.name}-基础走势图-50期.png`, title:`${item.name}基础走势图`, params:'期数：50期 · 遗漏值：显示', onComplete:resolve }))
+        await runJob({ kind:'trend', game, history:histories[game], showMisses:true, exportId:`batch-trend-${game}`, filename:`${item.name}-基础走势图-50期.png`, title:`${item.name}基础走势图`, params:'期数：50期 · 遗漏值：显示' })
         setBatchJob(null); await waitForPaint()
-        current += 1; setBatchProgress({ current, total })
-        await new Promise(resolve => setBatchJob({ kind:'detail', game, item, all, exportId:`batch-detail-${game}`, filename:`${item.name}-详情-${item.issue}.png`, title:`${item.name}详情`, params:`第 ${item.issue} 期 · ${item.drawDate}`, onComplete:resolve }))
+        await runJob({ kind:'trend', game, history:histories[game], showMisses:false, exportId:`batch-trend-nomiss-${game}`, filename:`${item.name}-基础走势图-无遗漏-50期.png`, title:`${item.name}基础走势图（无遗漏）`, params:'期数：50期 · 遗漏值：隐藏' })
         setBatchJob(null); await waitForPaint()
+        await runJob({ kind:'detail', game, item, all, exportId:`batch-detail-${game}`, filename:`${item.name}-详情-${item.issue}.png`, title:`${item.name}详情`, params:`第 ${item.issue} 期 · ${item.drawDate}` })
+        setBatchJob(null); await waitForPaint()
+        if (['dlt','ssq'].includes(game)) {
+          await runJob({ kind:'heat', game, history:histories[game], exportId:`batch-heat-${game}`, filename:`${item.name}-冷热图-10期分析-30期.png`, title:`${item.name}冷热图`, params:'分析：10期 · 显示：30期' })
+          setBatchJob(null); await waitForPaint()
+        }
+        if (game === 'kl8') {
+          await runJob({ kind:'kl8', game, history:histories[game], view:'matrix', exportId:'batch-kl8-matrix', filename:'快乐8基础矩阵图-20期.png', title:'快乐8基础矩阵图', params:'显示：20期' })
+          setBatchJob(null); await waitForPaint()
+          await runJob({ kind:'kl8', game, history:histories[game], view:'analytics', exportId:'batch-kl8-analytics', filename:'快乐8综合数据查阅表-20期.png', title:'快乐8综合数据查阅表', params:'显示：20期' })
+          setBatchJob(null); await waitForPaint()
+        }
       }
       trackAnalytics('export_batch',{ page:'home', count:exportItems.length })
     } finally { setBatchJob(null); setBatchExporting(false); setBatchProgress({ current:0, total:0 }) }
@@ -198,14 +222,14 @@ function DrawMetrics({ game, record, previousRecord }) {
   return <section className="card draw-metrics" aria-label="本期号码指标">{metrics.map(([key,label],index) => <div className="draw-metric" style={{'--metric-color':detailMetricColors[index]}} key={key}><i/><span><b>{stats[key]}</b><small>{label}</small></span></div>)}</section>
 }
 
-function TraditionalTrendTable({ game, history, save, initialExpanded = false, exportId, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
+function TraditionalTrendTable({ game, history, save, initialExpanded = false, initialShowMisses = true, exportId, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
   const [expanded, setExpanded] = useState(initialExpanded)
   const [period, setPeriod] = useState(50)
   const [trendMode, setTrendMode] = useState('basic')
   const [simulation, setSimulation] = useState({})
   const [multiplier, setMultiplier] = useState(1)
   const [showPatterns, setShowPatterns] = useState(true)
-  const [showMisses, setShowMisses] = useState(true)
+  const [showMisses, setShowMisses] = useState(initialShowMisses)
   const [exporting, setExporting] = useState(false)
   const exportTargetId = exportId || `trend-export-${game}`
   const rows = useMemo(() => history.slice(0, period).reverse(), [history, period])
@@ -489,8 +513,9 @@ async function exportTrendElement(id, filename, exportMeta, captureOptions = {})
 const nextLotteryIssue = issue => /^\d+$/.test(issue || '') ? String(Number(issue) + 1).padStart(issue.length,'0') : `${issue || '--'}后`
 const heatAnalysisPeriods = Array.from({ length:49 },(_,index) => index + 2)
 
-function DltHeatTrend({ history }) {
+function DltHeatTrend({ history, exportId, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
   const [expanded,setExpanded] = useState(false), [analysis,setAnalysis] = useState(10), [period,setPeriod] = useState(30), [exporting,setExporting] = useState(false)
+  const exportTargetId = exportId || 'dlt-heat-export'
   const rows = useMemo(() => {
     const chronological = [...history].reverse(), start = Math.max(0,chronological.length - period)
     const rank = (records,field,max,sizes) => {
@@ -508,13 +533,24 @@ function DltHeatTrend({ history }) {
     const sample = chronological.slice(-analysis)
     return [...actualRows,{ record:{id:'dlt-next-period',issue:nextLotteryIssue(latest.issue)}, front:rank(sample,'redBalls',35,[12,12,11]), back:rank(sample,'blueBalls',12,[6,6]), frontHits:new Set(), backHits:new Set(), ratio:'--', forecast:true }]
   },[history,analysis,period])
-  const download = async () => { setExporting(true); try { await exportTrendElement('dlt-heat-export',`大乐透-冷热图-${analysis}期分析-${period}期.png`,{ title:'大乐透冷热图', params:`分析：${analysis}期 · 显示：${period}期` }); trackAnalytics('export_chart',{page:'trend',game:'dlt',chart:'heat'}) } finally { setExporting(false) } }
+  const download = async () => { setExporting(true); try { await exportTrendElement(exportTargetId,exportFilename || `大乐透-冷热图-${analysis}期分析-${period}期.png`,{ title:exportTitle || '大乐透冷热图', params:exportParams || `分析：${analysis}期 · 显示：${period}期` }); trackAnalytics('export_chart',{page:'trend',game:'dlt',chart:'heat'}) } finally { setExporting(false) } }
+  useEffect(() => {
+    if (!autoExport) return undefined
+    if (!expanded) {
+      setExpanded(true)
+      return undefined
+    }
+    let active = true
+    download().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
+    return () => { active = false }
+  }, [autoExport, expanded])
   const cells=(numbers,type,hits,prefix)=>numbers.map(number=><td className={`heat-number ${hits.has(number)?`hit ${type}`:''}`} key={`${prefix}-${type}-${number}`}>{String(number).padStart(2,'0')}</td>)
-  return <section className={`card trend-fold-card heat-trend-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><b>冷热图</b><small>按频次降序 · 同频号码降序</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls heat-controls"><span>每行统计该期开奖前所选期数，再标注当期奖号</span><div className="trend-filter-actions"><label className="period-filter"><span>分析</span><select value={analysis} onChange={event=>setAnalysis(Number(event.target.value))}>{heatAnalysisPeriods.map(value=><option value={value} key={value}>{value}期</option>)}</select></label><label className="period-filter"><span>显示</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[30,50,100].map(value=><option value={value} key={value}>{value}期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'导出高清图'}</button></div></div><div className="heat-table-scroll"><table className="heat-table ranked-heat-table" id="dlt-heat-export"><thead><tr><th rowSpan="2">期号</th><th colSpan="35">前区</th><th rowSpan="2">三区比</th><th colSpan="12">后区</th></tr><tr><th className="hot-label" colSpan="12">热码(12)</th><th className="warm-label" colSpan="12">温码(12)</th><th className="cold-label" colSpan="11">冷码(11)</th><th className="hot-label" colSpan="6">热码(6)</th><th className="cold-label" colSpan="6">冷码(6)</th></tr></thead><tbody>{rows.map(row=><tr className={row.forecast?'forecast-row':''} key={row.record.id}><th>{row.record.issue}</th>{cells(row.front[0],'hot',row.frontHits,'front')}{cells(row.front[1],'warm',row.frontHits,'front')}{cells(row.front[2],'cold',row.frontHits,'front')}<td className="heat-ratio">{row.ratio}</td>{cells(row.back[0],'hot',row.backHits,'back')}{cells(row.back[1],'cold',row.backHits,'back')}</tr>)}{Array.from({length:2},(_,rowIndex)=><tr className="heat-blank-row" key={`dlt-blank-${rowIndex}`}><th>&nbsp;</th>{Array.from({length:35},(_,index)=><td className="heat-number" key={`front-${index}`}/>)}<td className="heat-ratio"/>{Array.from({length:12},(_,index)=><td className="heat-number" key={`back-${index}`}/>)}</tr>)}</tbody></table></div></>}</section>
+  return <section className={`card trend-fold-card heat-trend-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><b>冷热图</b><small>按频次降序 · 同频号码降序</small></span><ChevronDown size={20}/></button>{(expanded || autoExport)&&<><div className="trend-fold-controls heat-controls"><span>每行统计该期开奖前所选期数，再标注当期奖号</span><div className="trend-filter-actions"><label className="period-filter"><span>分析</span><select value={analysis} onChange={event=>setAnalysis(Number(event.target.value))}>{heatAnalysisPeriods.map(value=><option value={value} key={value}>{value}期</option>)}</select></label><label className="period-filter"><span>显示</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[30,50,100].map(value=><option value={value} key={value}>{value}期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'导出高清图'}</button></div></div><div className="heat-table-scroll"><table className="heat-table ranked-heat-table" id={exportTargetId}><thead><tr><th rowSpan="2">期号</th><th colSpan="35">前区</th><th rowSpan="2">三区比</th><th colSpan="12">后区</th></tr><tr><th className="hot-label" colSpan="12">热码(12)</th><th className="warm-label" colSpan="12">温码(12)</th><th className="cold-label" colSpan="11">冷码(11)</th><th className="hot-label" colSpan="6">热码(6)</th><th className="cold-label" colSpan="6">冷码(6)</th></tr></thead><tbody>{rows.map(row=><tr className={row.forecast?'forecast-row':''} key={row.record.id}><th>{row.record.issue}</th>{cells(row.front[0],'hot',row.frontHits,'front')}{cells(row.front[1],'warm',row.frontHits,'front')}{cells(row.front[2],'cold',row.frontHits,'front')}<td className="heat-ratio">{row.ratio}</td>{cells(row.back[0],'hot',row.backHits,'back')}{cells(row.back[1],'cold',row.backHits,'back')}</tr>)}{Array.from({length:2},(_,rowIndex)=><tr className="heat-blank-row" key={`dlt-blank-${rowIndex}`}><th>&nbsp;</th>{Array.from({length:35},(_,index)=><td className="heat-number" key={`front-${index}`}/>)}<td className="heat-ratio"/>{Array.from({length:12},(_,index)=><td className="heat-number" key={`back-${index}`}/>)}</tr>)}</tbody></table></div></>}</section>
 }
 
-function SsqHeatTrend({ history }) {
+function SsqHeatTrend({ history, exportId, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
   const [expanded,setExpanded] = useState(false), [analysis,setAnalysis] = useState(10), [period,setPeriod] = useState(30), [exporting,setExporting] = useState(false)
+  const exportTargetId = 'ssq-heat-export'
   const rows = useMemo(() => {
     const chronological = [...history].reverse(), start = Math.max(0,chronological.length - period)
     const rank = (records,field,max,sizes) => {
@@ -535,16 +571,36 @@ function SsqHeatTrend({ history }) {
     return [...actualRows,{ record:{ id:'ssq-next-period',issue:nextLotteryIssue(latest.issue) }, red:rank(nextSample,'redBalls',33,[11,11,11]), blue:rank(nextSample,'blueBalls',16,[8,8]), redHits:new Set(), blueHits:new Set(), zoneRatio:'--', sum:'--', extreme:'--', forecast:true }]
   },[history,analysis,period])
   const cells=(numbers,type,hits,prefix)=>numbers.map(number=><td className={`heat-number ${hits.has(number)?`hit ${type}`:''}`} key={`${prefix}-${type}-${number}`}>{String(number).padStart(2,'0')}</td>)
-  const download = async () => { setExporting(true); try { await exportTrendElement('ssq-heat-export',`双色球-冷热图-${analysis}期分析-${period}期.png`,{ title:'双色球冷热图', params:`分析：${analysis}期 · 显示：${period}期` }); trackAnalytics('export_chart',{page:'trend',game:'ssq',chart:'heat'}) } finally { setExporting(false) } }
+  const download = async () => { setExporting(true); try { await exportTrendElement(exportTargetId,exportFilename || `双色球-冷热图-${analysis}期分析-${period}期.png`,{ title:exportTitle || '双色球冷热图', params:exportParams || `分析：${analysis}期 · 显示：${period}期` }); trackAnalytics('export_chart',{page:'trend',game:'ssq',chart:'heat'}) } finally { setExporting(false) } }
+  useEffect(() => {
+    if (!autoExport) return undefined
+    if (!expanded) {
+      setExpanded(true)
+      return undefined
+    }
+    let active = true
+    download().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
+    return () => { active = false }
+  }, [autoExport, expanded])
   return <section className={`card trend-fold-card heat-trend-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><b>冷热图</b><small>按频次降序 · 同频号码降序</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls heat-controls"><span>每行统计该期开奖前所选期数，再标注当期奖号</span><div className="trend-filter-actions"><label className="period-filter"><span>分析</span><select value={analysis} onChange={event=>setAnalysis(Number(event.target.value))}>{heatAnalysisPeriods.map(value=><option value={value} key={value}>{value}期</option>)}</select></label><label className="period-filter"><span>显示</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[30,50,100].map(value => <option value={value} key={value}>{value}期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'导出高清图'}</button></div></div><div className="heat-table-scroll"><table className="heat-table ranked-heat-table ssq-ranked-heat" id="ssq-heat-export"><thead><tr><th rowSpan="2">期号</th><th colSpan="33">红球</th><th rowSpan="2">三区比</th><th rowSpan="2">和值</th><th rowSpan="2">极值</th><th colSpan="16">蓝球</th></tr><tr><th className="hot-label" colSpan="11">热码(11)</th><th className="warm-label" colSpan="11">温码(11)</th><th className="cold-label" colSpan="11">冷码(11)</th><th className="hot-label" colSpan="8">热码(8)</th><th className="cold-label" colSpan="8">冷码(8)</th></tr></thead><tbody>{rows.map(row => <tr className={row.forecast?'forecast-row':''} key={row.record.id}><th>{row.record.issue}</th>{cells(row.red[0],'hot',row.redHits,'red')}{cells(row.red[1],'warm',row.redHits,'red')}{cells(row.red[2],'cold',row.redHits,'red')}<td className="heat-ratio">{row.zoneRatio}</td><td className="heat-stat-value">{row.sum}</td><td className="heat-stat-value">{row.extreme}</td>{cells(row.blue[0],'hot',row.blueHits,'blue')}{cells(row.blue[1],'cold',row.blueHits,'blue')}</tr>)}{Array.from({length:2},(_,rowIndex)=><tr className="heat-blank-row" key={`ssq-blank-${rowIndex}`}><th>&nbsp;</th>{Array.from({length:33},(_,index)=><td className="heat-number" key={`red-${index}`}/>) }<td className="heat-ratio"/><td className="heat-stat-value"/><td className="heat-stat-value"/>{Array.from({length:16},(_,index)=><td className="heat-number" key={`blue-${index}`}/>)}</tr>)}</tbody></table></div></>}</section>
 }
 
-function Kl8DataViews({ history }) {
-  const [expanded,setExpanded]=useState(false),[view,setView]=useState('matrix'),[period,setPeriod]=useState(20),[exporting,setExporting]=useState(false)
+function Kl8DataViews({ history, viewOverride, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
+  const [expanded,setExpanded]=useState(false),[view,setView]=useState(viewOverride || 'matrix'),[period,setPeriod]=useState(20),[exporting,setExporting]=useState(false)
   const rows=useMemo(()=>history.slice(0,period).reverse(),[history,period])
   const metrics=record=>{const numbers=record.redBalls.map(Number).sort((a,b)=>a-b),sum=numbers.reduce((a,b)=>a+b,0),min=numbers[0],max=numbers.at(-1),span=max-min;let runs=0;for(let i=1;i<numbers.length;i++)if(numbers[i]===numbers[i-1]+1&&(i===1||numbers[i-1]!==numbers[i-2]+1))runs++;return{sum,span,max,min,sumTail:sum%10,average:Math.round(sum/numbers.length),sumSpan:sum+span,diffSpan:sum-span,tailSum:numbers.reduce((total,n)=>total+n%10,0),runs,tailGroups:new Set(numbers.map(n=>n%10)).size}}
   const columns=[['sum','和值'],['span','跨度'],['max','最大值'],['min','最小值'],['sumTail','和值尾'],['average','均值'],['sumSpan','和跨和'],['diffSpan','和跨差'],['tailSum','尾数和值'],['runs','连号组数'],['tailGroups','尾数组数']]
-  const download=async()=>{setExporting(true);try{const title=`快乐8${view==='matrix'?'基础矩阵图':'综合数据查阅表'}`;await exportTrendElement('kl8-data-export',`${title}-${period}期.png`,{ title, params:`显示：${period}期` });trackAnalytics('export_chart',{page:'trend',game:'kl8',chart:view})}finally{setExporting(false)}}
+  const download=async()=>{setExporting(true);try{const title=exportTitle || `快乐8${view==='matrix'?'基础矩阵图':'综合数据查阅表'}`;await exportTrendElement('kl8-data-export',exportFilename || `${title}-${period}期.png`,{ title, params:exportParams || `显示：${period}期` });trackAnalytics('export_chart',{page:'trend',game:'kl8',chart:view})}finally{setExporting(false)}}
+  useEffect(() => {
+    if (!autoExport) return undefined
+    if (!expanded) {
+      setExpanded(true)
+      return undefined
+    }
+    let active = true
+    download().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
+    return () => { active = false }
+  }, [autoExport, expanded])
   return <section className={`card trend-fold-card kl8-data-card ${expanded?'expanded':''}`}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}><span><b>快乐8数据图表</b><small>基础矩阵与综合数据查阅</small></span><ChevronDown size={20}/></button>{expanded&&<><div className="trend-fold-controls kl8-data-controls"><div className="kl8-view-tabs"><button className={view==='matrix'?'active':''} onClick={()=>setView('matrix')}>基础矩阵图</button><button className={view==='analytics'?'active':''} onClick={()=>setView('analytics')}>综合数据查阅表</button></div><div className="trend-filter-actions"><label className="period-filter"><span>期数</span><select value={period} onChange={event=>setPeriod(Number(event.target.value))}>{[20,30,50,100].map(value=><option value={value} key={value}>近 {value} 期</option>)}</select></label><button className="trend-export-button" disabled={exporting} onClick={download}><Download size={15}/>{exporting?'生成中…':'下载图片'}</button></div></div><div className="kl8-data-scroll"><div id="kl8-data-export">{view==='matrix'?<div className="kl8-matrix-grid">{rows.map(record=>{const hits=new Set(record.redBalls.map(Number));return <article className="kl8-matrix-item" key={record.id}><h4>{record.issue}期</h4><div>{Array.from({length:80},(_,index)=>index+1).map(number=><span className={hits.has(number)?'hit':''} key={number}>{String(number).padStart(2,'0')}</span>)}</div></article>})}</div>:<table className="kl8-analytics-table"><thead><tr><th>期号</th>{columns.map(([,label])=><th key={label}>{label}</th>)}</tr></thead><tbody>{rows.map(record=>{const data=metrics(record);return <tr key={record.id}><th>{record.issue}</th>{columns.map(([key])=><td key={key}>{data[key]}</td>)}</tr>})}</tbody></table>}</div></div></>}</section>
 }
 
