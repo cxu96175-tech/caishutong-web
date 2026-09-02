@@ -98,7 +98,7 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
     } finally { setBatchJob(null); setBatchExporting(false); setBatchProgress({ current:0, total:0 }) }
   }
   return <main><div className="section-head home-section-head"><div className="home-refresh">{canExport && <button type="button" className="home-batch-export-button" onClick={exportBatch} disabled={batchExporting || !latest.length}><Download size={14}/>{batchExporting ? `导出中 ${batchProgress.current}/${batchProgress.total}` : '一键导出图片'}</button>}{stamp && <span>更新于 {stamp}</span>}<button className="icon-btn" onClick={load} aria-label="刷新"><RefreshCw size={14} className={loading ? 'spin' : ''}/></button></div></div>
-    {loading && !latest.length ? <div className="cards">{[1,2,3].map(i => <div className="card skeleton" key={i}/>)}</div> : error ? <div className="state"><b>加载失败</b><p>{error}</p><button onClick={load}>重新加载</button></div> : <div className="cards">{latest.map(r => <article className="card result-card" key={r.id}>
+    {loading && !latest.length ? <div className="cards">{[1,2,3].map(i => <div className="card skeleton" key={i}/>)}</div> : error ? <div className="state"><b>加载失败</b><p>{error}</p><button onClick={load}>重新加载</button></div> : <div className="cards">{latest.map((r,index) => <article className="card result-card list-entry" style={{ '--list-index': index }} key={r.id}>
       <header><div className="game"><span className={`game-icon ${r.game}`}>{r.icon}</span><div><h2>{r.name}</h2><p>第 {r.issue} 期</p></div></div><div className="date">{r.drawDate}<small>{r.drawTime} 开奖</small></div></header>
       <Balls groups={[{ values: r.redBalls }, { values: r.blueBalls, accent: true }]}/>
       <div className="home-card-actions" aria-label={`${r.name}快捷入口`}>
@@ -152,7 +152,169 @@ function trendCategory(value, mode, group) {
   return number >= midpoint ? '大' : '小'
 }
 
+const dltSpanValues = Array.from({ length:34 }, (_, index) => index + 1)
+const dltSumIntervals = [[15,50],[51,60],[61,70],[71,80],[81,90],[91,100],[101,110],[111,120],[121,130],[131,140],[141,150],[151,165]]
+const dltSumIntervalLabel = ([min,max]) => `${min}\\n${max}`
+const dltWeekday = record => {
+  const day = new Date(record.drawDate || '').getDay()
+  return Number.isFinite(day) && day > 0 ? day : day === 0 ? 7 : '--'
+}
+const dltFront = record => (record.redBalls || []).map(Number).filter(Number.isFinite).slice(0,5)
+const dltBack = record => (record.blueBalls || []).map(Number).filter(Number.isFinite).slice(0,2)
+const dltSummary = (record, previous) => {
+  const front = dltFront(record)
+  const sum = front.reduce((total, value) => total + value, 0)
+  const min = front.length ? Math.min(...front) : 0
+  const max = front.length ? Math.max(...front) : 0
+  const small = front.filter(value => value <= 17).length
+  const odd = front.filter(value => value % 2 === 1).length
+  return { front, sum, span: front.length ? max - min : '--', small, big: front.length - small, odd, even: front.length - odd, tail: sum % 10, amplitude: previous ? Math.abs(sum - dltSummary(previous).sum) : '--' }
+}
+
+function DltDrawCells({ record }) {
+  return <div className="dlt-derived-draw"><span className="dlt-derived-num-list">{dltFront(record).map(value => <b key={`front-${value}`}>{String(value).padStart(2,'0')}</b>)}</span><i>+</i><span className="dlt-derived-num-list dlt-derived-blue-list">{dltBack(record).map(value => <b key={`back-${value}`}>{String(value).padStart(2,'0')}</b>)}</span></div>
+}
+
+function DltPartitionTable({ rows, mode }) {
+  const oddEven = mode === 'oddEven'
+  const buckets = oddEven ? [
+    ['奇号区', [['小奇', value => value <= 17 && value % 2 === 1], ['大奇', value => value >= 18 && value % 2 === 1]]],
+    ['偶号区', [['小偶', value => value <= 17 && value % 2 === 0], ['大偶', value => value >= 18 && value % 2 === 0]]]
+  ] : [
+    ['小号区', [['小奇', value => value <= 17 && value % 2 === 1], ['小偶', value => value <= 17 && value % 2 === 0]]],
+    ['大号区', [['大偶', value => value >= 18 && value % 2 === 0], ['大奇', value => value >= 18 && value % 2 === 1]]]
+  ]
+  return <div className="dlt-derived-scroll"><table className={`dlt-derived-table dlt-partition-table ${oddEven ? 'odd-even' : 'big-small'}`}><thead><tr><th rowSpan="2">期号</th><th rowSpan="2">星期</th><th rowSpan="2" className="dlt-draw-head">开奖号码</th>{buckets.map(([title, columns]) => <th colSpan={columns.length} key={title}>{title}</th>)}<th rowSpan="2">大小比</th><th rowSpan="2">奇偶比</th><th rowSpan="2">和值</th><th rowSpan="2">跨度</th></tr><tr>{buckets.flatMap(([,columns]) => columns.map(([title]) => <th key={title}>{title}</th>))}</tr></thead><tbody>{rows.map((record,index) => { const summary = dltSummary(record, rows[index - 1]); return <tr key={record.id}><th>{record.issue}</th><td>{dltWeekday(record)}</td><td className="dlt-draw-cell"><DltDrawCells record={record}/></td>{buckets.flatMap(([,columns]) => columns.map(([title, predicate]) => { const values = summary.front.filter(predicate); return <td className={`dlt-partition-cell ${title.includes('大') ? 'large' : 'small'} ${title.includes('奇') ? 'odd' : 'even'}`} key={`${record.id}-${title}`}>{values.length ? values.map(value => <span key={value}>{String(value).padStart(2,'0')}</span>) : <em>--</em>}</td> }))}<td className="dlt-stat-cell">{summary.big}:{summary.small}</td><td className="dlt-stat-cell">{summary.odd}:{summary.even}</td><td className="dlt-stat-cell strong">{summary.sum}</td><td className="dlt-stat-cell strong">{summary.span}</td></tr> })}</tbody></table></div>
+}
+
+function DltSpanTable({ rows }) {
+  const rowHeight = 34, headerHeight = 64, issueWidth = 78, weekdayWidth = 46, drawWidth = 230, cellWidth = 30
+  const gridWidth = issueWidth + weekdayWidth + drawWidth + dltSpanValues.length * cellWidth
+  const points = rows.map((record, index) => ({ x: (dltSummary(record).span - 1) * cellWidth + cellWidth / 2, y: index * rowHeight + rowHeight / 2 })).filter(point => Number.isFinite(point.x) && point.x >= 0)
+  return <div className="dlt-derived-scroll"><div className="dlt-span-grid" style={{ width: gridWidth }}><div className="dlt-span-grid-row dlt-span-grid-head" style={{ '--dlt-span-columns': ` ${issueWidth}px ${weekdayWidth}px ${drawWidth}px repeat(${dltSpanValues.length}, ${cellWidth}px)` }}><div style={{ gridRow: 'span 2' }}>期号</div><div style={{ gridRow: 'span 2' }}>星期</div><div style={{ gridRow: 'span 2' }}>开奖号码</div><strong style={{ gridColumn: `4 / span ${dltSpanValues.length}` }}>跨度走势分布</strong>{dltSpanValues.map(value => <span key={value}>{String(value).padStart(2,'0')}</span>)}</div>{rows.map((record, index) => { const summary = dltSummary(record); return <div className="dlt-span-grid-row" style={{ '--dlt-span-columns': ` ${issueWidth}px ${weekdayWidth}px ${drawWidth}px repeat(${dltSpanValues.length}, ${cellWidth}px)` }} key={record.id}><b>{record.issue}</b><span>{dltWeekday(record)}</span><div className="dlt-draw-cell"><DltDrawCells record={record}/></div>{dltSpanValues.map(value => <span className={`dlt-span-cell ${summary.span === value ? 'active' : ''}`} key={`${record.id}-${value}`}>{summary.span === value ? value : ''}</span>)}</div> })}<svg className="dlt-span-lines" aria-hidden="true" width={dltSpanValues.length * cellWidth} height={rows.length * rowHeight} viewBox={`0 0 ${dltSpanValues.length * cellWidth} ${rows.length * rowHeight}`} style={{ left: issueWidth + weekdayWidth + drawWidth, top: headerHeight }}>{points.slice(1).map((point, index) => { const previous = points[index]; return <line key={index} x1={previous.x} y1={previous.y} x2={point.x} y2={point.y}/> })}</svg></div></div>
+}
+
+function DltPartitionMatrixTable({ rows, mode }) {
+  const oddEven = mode === 'oddEven'
+  const buckets = oddEven ? [
+    ['奇号区', [['小奇', value => value <= 17 && value % 2 === 1], ['大奇', value => value >= 18 && value % 2 === 1]]],
+    ['偶号区', [['小偶', value => value <= 17 && value % 2 === 0], ['大偶', value => value >= 18 && value % 2 === 0]]]
+  ] : [
+    ['小号区', [['小奇', value => value <= 17 && value % 2 === 1], ['小偶', value => value <= 17 && value % 2 === 0]]],
+    ['大号区', [['大偶', value => value >= 18 && value % 2 === 0], ['大奇', value => value >= 18 && value % 2 === 1]]]
+  ]
+  const categories = buckets.flatMap(([, columns]) => columns.map(([label, predicate]) => ({ key: label, label, predicate, numbers: Array.from({ length:35 }, (_, index) => index + 1).filter(predicate), tone: (label.includes('大') ? 'large' : 'small') + ' ' + (label.includes('奇') ? 'odd' : 'even') })))
+  const misses = Object.fromEntries(categories.map(category => [category.key, Object.fromEntries(category.numbers.map(value => [value, 0]))]))
+  const matrixRows = rows.map((record, index) => {
+    const front = dltFront(record)
+    const cells = categories.map(category => category.numbers.map(value => {
+      if (front.includes(value)) { misses[category.key][value] = 0; return { value, hit: true, miss: 0 } }
+      misses[category.key][value] += 1
+      return { value, hit: false, miss: misses[category.key][value] }
+    }))
+    return { record, summary: dltSummary(record, rows[index - 1]), cells }
+  })
+  return <div className="dlt-derived-scroll"><table className="dlt-derived-table dlt-partition-matrix"><thead><tr><th rowSpan="3">期号</th><th rowSpan="3">星期</th><th rowSpan="3" className="dlt-draw-head">开奖号码</th>{buckets.map(([title, columns]) => <th colSpan={columns.reduce((sum, [, predicate]) => sum + Array.from({ length:35 }, (_, index) => index + 1).filter(predicate).length, 0)} key={title}>{title}</th>)}<th rowSpan="3">大小比</th><th rowSpan="3">奇偶比</th><th rowSpan="3">和值</th><th rowSpan="3">跨度</th></tr><tr>{buckets.flatMap(([, columns]) => columns.map(([label, predicate]) => <th colSpan={Array.from({ length:35 }, (_, index) => index + 1).filter(predicate).length} key={label}>{label}</th>))}</tr><tr>{categories.flatMap(category => category.numbers.map(value => <th className={category.tone} key={category.key + value}>{String(value).padStart(2,'0')}</th>))}</tr></thead><tbody>{matrixRows.map(({ record, summary, cells }) => <tr key={record.id}><th>{record.issue}</th><td>{dltWeekday(record)}</td><td className="dlt-draw-cell"><DltDrawCells record={record}/></td>{cells.flatMap((categoryCells, categoryIndex) => categoryCells.map(cell => <td className={'dlt-partition-number ' + categories[categoryIndex].tone + (cell.hit ? ' active' : '')} key={record.id + '-' + categories[categoryIndex].key + '-' + cell.value}>{cell.hit ? <b>{String(cell.value).padStart(2,'0')}</b> : <span>{cell.miss}</span>}</td>))}<td className="dlt-stat-cell">{summary.big}:{summary.small}</td><td className="dlt-stat-cell">{summary.odd}:{summary.even}</td><td className="dlt-stat-cell strong">{summary.sum}</td><td className="dlt-stat-cell strong">{summary.span}</td></tr>)}</tbody></table></div>
+}
+
+function DltSumTable({ rows }) {
+  const previousSums = rows.map((record, index) => dltSummary(record, rows[index - 1]))
+  return <div className="dlt-derived-scroll"><table className="dlt-derived-table dlt-sum-table"><thead><tr><th rowSpan="2">期号</th><th rowSpan="2">星期</th><th rowSpan="2" className="dlt-draw-head">开奖号码</th><th colSpan={dltSumIntervals.length}>前区和值区间分布</th><th colSpan="3">和值形态</th><th colSpan="10">前区和尾分布</th></tr><tr>{dltSumIntervals.map(interval => <th className="dlt-multiline" key={interval[0]}>{dltSumIntervalLabel(interval).split('\\n').map(part => <span key={part}>{part}</span>)}</th>)}<th>奇</th><th>偶</th><th>振幅</th>{Array.from({ length:10 }, (_, value) => <th key={value}>{value}</th>)}</tr></thead><tbody>{rows.map((record, index) => { const summary = previousSums[index]; const intervalIndex = dltSumIntervals.findIndex(([min,max]) => summary.sum >= min && summary.sum <= max); return <tr key={record.id}><th>{record.issue}</th><td>{dltWeekday(record)}</td><td className="dlt-draw-cell"><DltDrawCells record={record}/></td>{dltSumIntervals.map((interval, intervalCellIndex) => <td className={`dlt-sum-cell ${intervalCellIndex === intervalIndex ? 'active' : ''}`} key={interval[0]}>{intervalCellIndex === intervalIndex ? summary.sum : ''}</td>)}<td className={`dlt-shape-cell ${summary.sum % 2 ? 'active' : ''}`}>{summary.sum % 2 ? '奇' : ''}</td><td className={`dlt-shape-cell ${summary.sum % 2 === 0 ? 'active' : ''}`}>{summary.sum % 2 === 0 ? '偶' : ''}</td><td className="dlt-stat-cell">{summary.amplitude}</td>{Array.from({ length:10 }, (_, value) => <td className={`dlt-tail-cell ${summary.tail === value ? 'active' : ''}`} key={value}>{summary.tail === value ? summary.tail : ''}</td>)}</tr> })}</tbody></table></div>
+}
+
+function DltTrendModeTable({ rows, mode }) {
+  if (mode === 'bigSmall' || mode === 'oddEven') return <DltPartitionMatrixTable rows={rows} mode={mode}/>
+  if (mode === 'span') return <DltSpanTable rows={rows}/>
+  return <DltSumTable rows={rows}/>
+}
+
+const fc3dDigits = record => (record.redBalls || []).map(Number).filter(Number.isFinite).slice(0, 3)
+const fc3dPrimeValues = new Set([2, 3, 5, 7])
+function fc3dSummary(record, previous) {
+  const digits = fc3dDigits(record)
+  const sum = digits.reduce((total, value) => total + value, 0)
+  const span = digits.length ? Math.max(...digits) - Math.min(...digits) : '--'
+  const big = digits.filter(value => value >= 5).length
+  const odd = digits.filter(value => value % 2 === 1).length
+  const shapeFor = values => values.map(value => value ? '奇' : '偶').join('')
+  const bigSmallShape = digits.map(value => value >= 5 ? '大' : '小').join('')
+  const oddEvenShape = shapeFor(digits.map(value => value % 2))
+  const previousSummary = previous ? fc3dSummary(previous) : null
+  return {
+    digits,
+    sum,
+    tail: sum % 10,
+    span,
+    big,
+    small: digits.length - big,
+    odd,
+    even: digits.length - odd,
+    bigSmallShape,
+    oddEvenShape,
+    spanParity: span === '--' ? '--' : span % 2 ? '奇' : '偶',
+    spanSize: span === '--' ? '--' : span >= 5 ? '大' : '小',
+    spanPrime: span === '--' ? '--' : fc3dPrimeValues.has(span) ? '质' : '合',
+    sumParity: sum % 2 ? '奇' : '偶',
+    sumAmplitude: previousSummary ? Math.abs(sum - previousSummary.sum) : '--',
+    spanAmplitude: previousSummary && span !== '--' && previousSummary.span !== '--' ? Math.abs(span - previousSummary.span) : '--',
+    tailParity: sum % 10 % 2 ? '奇' : '偶',
+    tailRoute: sum % 10 % 3
+  }
+}
+
+function Fc3dDrawCells({ record }) {
+  return <div className="fc3d-derived-draw"><b>{fc3dDigits(record).join('')}</b></div>
+}
+
+const fc3dRange = Array.from({ length: 10 }, (_, value) => value)
+const fc3dSumRange = Array.from({ length: 28 }, (_, value) => value)
+const fc3dRatioRange = ['0:3', '1:2', '2:1', '3:0']
+
+function Fc3dSpanTable({ rows }) {
+  return <div className="fc3d-derived-scroll"><table className="fc3d-derived-table fc3d-span-table"><thead><tr><th rowSpan="2">期号</th><th rowSpan="2">星期</th><th rowSpan="2" className="fc3d-draw-head">开奖号</th><th rowSpan="2">和尾</th><th rowSpan="2">跨度</th><th colSpan="10">总跨度走势</th><th colSpan="3">跨度形态分析</th><th colSpan="10">跨度振幅走势</th></tr><tr>{fc3dRange.map(value => <th key={`span-${value}`}>{value}</th>)}<th>奇偶</th><th>大小</th><th>质合</th>{fc3dRange.map(value => <th key={`amplitude-${value}`}>{value}</th>)}</tr></thead><tbody>{rows.map((record, index) => { const summary = fc3dSummary(record, rows[index - 1]); return <tr key={record.id}><th>{record.issue}</th><td>{dltWeekday(record)}</td><td className="fc3d-draw-slot"><Fc3dDrawCells record={record}/></td><td className="fc3d-stat-cell">{summary.tail}</td><td className="fc3d-stat-cell strong">{summary.span}</td>{fc3dRange.map(value => <td className={`fc3d-grid-cell ${summary.span === value ? 'active red' : ''}`} key={`${record.id}-span-${value}`}>{summary.span === value ? value : ''}</td>)}<td className={`fc3d-grid-cell ${summary.spanParity !== '--' ? 'active teal' : ''}`}>{summary.spanParity}</td><td className={`fc3d-grid-cell ${summary.spanSize !== '--' ? 'active gold' : ''}`}>{summary.spanSize}</td><td className={`fc3d-grid-cell ${summary.spanPrime !== '--' ? 'active purple' : ''}`}>{summary.spanPrime}</td>{fc3dRange.map(value => <td className={`fc3d-grid-cell ${summary.spanAmplitude === value ? 'active red' : ''}`} key={`${record.id}-amplitude-${value}`}>{summary.spanAmplitude === value ? value : ''}</td>)}</tr>})}</tbody></table></div>
+}
+
+function Fc3dSumTable({ rows }) {
+  return <div className="fc3d-derived-scroll"><table className="fc3d-derived-table fc3d-sum-table"><thead><tr><th rowSpan="2">期号</th><th rowSpan="2">星期</th><th rowSpan="2" className="fc3d-draw-head">开奖号</th><th rowSpan="2">和值</th><th colSpan={fc3dSumRange.length}>和值走势</th><th colSpan="3">和值形态</th><th colSpan="10">和值尾走势</th><th colSpan="3">和值尾形态</th></tr><tr>{fc3dSumRange.map(value => <th key={`sum-${value}`}>{value}</th>)}<th>奇偶</th><th>振幅</th><th>012路</th>{fc3dRange.map(value => <th key={`tail-${value}`}>{value}</th>)}<th>奇偶</th><th>012路</th><th>大小</th></tr></thead><tbody>{rows.map((record, index) => { const summary = fc3dSummary(record, rows[index - 1]); return <tr key={record.id}><th>{record.issue}</th><td>{dltWeekday(record)}</td><td className="fc3d-draw-slot"><Fc3dDrawCells record={record}/></td><td className="fc3d-stat-cell strong">{summary.sum}</td>{fc3dSumRange.map(value => <td className={`fc3d-grid-cell ${summary.sum === value ? 'active red' : ''}`} key={`${record.id}-sum-${value}`}>{summary.sum === value ? value : ''}</td>)}<td className="fc3d-grid-cell active teal">{summary.sumParity}</td><td className={`fc3d-grid-cell ${summary.sumAmplitude !== '--' ? 'active red' : ''}`}>{summary.sumAmplitude}</td><td className="fc3d-grid-cell active teal">{summary.sum % 3}</td>{fc3dRange.map(value => <td className={`fc3d-grid-cell ${summary.tail === value ? 'active gold' : ''}`} key={`${record.id}-tail-${value}`}>{summary.tail === value ? value : ''}</td>)}<td className="fc3d-grid-cell active teal">{summary.tailParity}</td><td className="fc3d-grid-cell active teal">{summary.tailRoute}</td><td className={`fc3d-grid-cell active ${summary.tail >= 5 ? 'gold' : 'purple'}`}>{summary.tail >= 5 ? '大' : '小'}</td></tr>})}</tbody></table></div>
+}
+
+function Fc3dShapeTable({ rows, mode }) {
+  const oddEven = mode === 'oddEven'
+  const positionLabels = ['百位', '十位', '个位']
+  const categories = oddEven ? ['奇', '偶'] : ['大', '小']
+  const shapeOptions = oddEven ? ['全奇', '两奇一偶', '两偶一奇', '全偶'] : ['全大', '两大一小', '两小一大', '全小']
+  return <div className="fc3d-derived-scroll"><table className="fc3d-derived-table fc3d-shape-table"><thead><tr><th rowSpan="2">期号</th><th rowSpan="2">星期</th><th rowSpan="2" className="fc3d-draw-head">开奖号</th><th rowSpan="2">和值</th>{positionLabels.map(label => <th colSpan="2" key={label}>{label}</th>)}<th rowSpan="2">跨度</th><th rowSpan="2">{oddEven ? '奇偶形态' : '大小形态'}</th><th colSpan="4">{oddEven ? '奇偶形态分布' : '大小形态分布'}</th><th rowSpan="2">{oddEven ? '奇偶比' : '大小比'}</th><th colSpan="4">{oddEven ? '奇偶比走势' : '大小比走势'}</th></tr><tr>{positionLabels.flatMap(label => categories.map(category => <th key={`${label}-${category}`}>{category}</th>))}{shapeOptions.map(value => <th key={value}>{value}</th>)}{fc3dRatioRange.map(value => <th key={`ratio-${value}`}>{value}</th>)}</tr></thead><tbody>{rows.map((record, index) => { const summary = fc3dSummary(record, rows[index - 1]); const primaryCount = oddEven ? summary.odd : summary.big; const secondaryCount = oddEven ? summary.even : summary.small; const shape = oddEven ? summary.oddEvenShape : summary.bigSmallShape; const activeShape = primaryCount === 3 ? 0 : primaryCount === 2 ? 1 : secondaryCount === 2 ? 2 : 3; const ratio = `${primaryCount}:${secondaryCount}`; return <tr key={record.id}><th>{record.issue}</th><td>{dltWeekday(record)}</td><td className="fc3d-draw-slot"><Fc3dDrawCells record={record}/></td><td className="fc3d-stat-cell strong">{summary.sum}</td>{summary.digits.map((value, position) => categories.map(category => { const selected = oddEven ? (value % 2 ? '奇' : '偶') : (value >= 5 ? '大' : '小'); return <td className={`fc3d-category-cell ${selected === category ? 'active ' + (oddEven ? 'teal' : 'gold') : ''}`} key={`${record.id}-${position}-${category}`}>{selected === category ? value : ''}</td> }))}<td className="fc3d-stat-cell strong">{summary.span}</td><td className="fc3d-shape-label">{shape}</td>{shapeOptions.map((value, shapeIndex) => <td className={`fc3d-grid-cell ${shapeIndex === activeShape ? 'active teal' : ''}`} key={`${record.id}-${value}`}>{shapeIndex === activeShape ? value : ''}</td>)}<td className="fc3d-stat-cell">{ratio}</td>{fc3dRatioRange.map(value => <td className={`fc3d-grid-cell ${value === ratio ? 'active teal' : ''}`} key={`${record.id}-ratio-${value}`}>{value === ratio ? value : ''}</td>)}</tr>})}</tbody></table></div>
+}
+
+function Fc3dTrendModeTable({ rows, mode }) {
+  if (mode === 'bigSmall' || mode === 'oddEven') return <Fc3dShapeTable rows={rows} mode={mode}/>
+  if (mode === 'span') return <Fc3dSpanTable rows={rows}/>
+  return <Fc3dSumTable rows={rows}/>
+}
+
+function DerivedDrawCells({ record }) {
+  const renderValues = (values, accent) => <span className={accent ? 'derived-blue-list' : 'derived-red-list'}>{values.map((value, index) => <b key={String(value) + index}>{value}</b>)}</span>
+  return <div className="derived-draw-cell">{renderValues(record.redBalls || [], false)}{record.blueBalls?.length > 0 && <><i>+</i>{renderValues(record.blueBalls, true)}</>}</div>
+}
+
+function GenericTrendModeTable({ game, rows, mode }) {
+  const groups = useMemo(() => getTrendGroups(game).filter(group => !group.distribution), [game])
+  const positionMode = mode === 'bigSmall' || mode === 'oddEven'
+  const categories = mode === 'oddEven' ? ['奇', '偶'] : ['大', '小']
+  const stats = rows.map((record, index) => ({ record, values: groups.map(group => group.pick(record).filter(Boolean)), stats: getTrendStats(game, record), previous: rows[index - 1] }))
+  if (positionMode) {
+  return <div className="derived-trend-scroll"><table className="derived-trend-table derived-position-table"><thead><tr><th rowSpan="2">期号</th><th rowSpan="2">星期</th><th rowSpan="2" className="derived-draw-head">开奖号码</th>{groups.map(group => <th className="derived-group-head" colSpan="2" key={group.key}>{group.title}</th>)}<th rowSpan="2">和值</th><th rowSpan="2">跨度</th></tr><tr>{groups.flatMap(group => categories.map(category => <th key={group.key + category}>{category}</th>))}</tr></thead><tbody>{stats.map(row => <tr key={row.record.id}><th>{row.record.issue}</th><td>{dltWeekday(row.record)}</td><td className="derived-draw-slot"><DerivedDrawCells record={row.record}/></td>{row.values.flatMap((values, groupIndex) => categories.map(category => { const hits = values.filter(value => trendCategory(value, mode, groups[groupIndex]) === category); return <td className={'derived-category-cell derived-group-cell ' + (category === categories[0] ? 'derived-group-start ' : '') + (hits.length ? 'active ' : '') + (groups[groupIndex].accent ? 'blue' : '')} key={row.record.id + '-' + groupIndex + '-' + category}>{hits.length ? hits.map((value, index) => <span key={String(value) + index}>{value}</span>) : <em>--</em>}</td> }))}<td className="derived-stat-cell strong">{row.stats.sum}</td><td className="derived-stat-cell strong">{row.stats.span}</td></tr>)}</tbody></table></div>
+  }
+  const valueLabel = mode === 'sum' ? '和值' : '跨度'
+  const secondaryLabel = mode === 'sum' ? '和值尾' : '和值'
+  return <div className="derived-trend-scroll"><table className="derived-trend-table derived-metric-table"><thead><tr><th>期号</th><th>星期</th><th className="derived-draw-head">开奖号码</th><th>{valueLabel}</th><th>{secondaryLabel}</th></tr></thead><tbody>{stats.map(row => { const value = row.stats[mode]; const secondary = value === '--' ? '--' : mode === 'sum' ? Number(value) % 10 : row.stats.sum; return <tr key={row.record.id}><th>{row.record.issue}</th><td>{dltWeekday(row.record)}</td><td className="derived-draw-slot"><DerivedDrawCells record={row.record}/></td><td className="derived-value">{value}</td><td className="derived-value-secondary">{secondary}</td></tr> })}</tbody></table></div>
+}
+
 function TrendModeTable({ game, rows, mode }) {
+  if (game === 'dlt') return <div className="trend-derived-view" data-game={game}><DltTrendModeTable rows={rows} mode={mode}/></div>
+  if (['fc3d', 'pl3'].includes(game)) return <div className="trend-derived-view" data-game={game}><Fc3dTrendModeTable rows={rows} mode={mode}/></div>
+  return <div className="trend-derived-view" data-game={game}><GenericTrendModeTable game={game} rows={rows} mode={mode}/></div>
+  /*
   const groups = useMemo(() => getTrendGroups(game).filter(group => !group.distribution), [game])
   const positionMode = mode === 'bigSmall' || mode === 'oddEven'
   const categories = mode === 'oddEven' ? ['奇', '偶'] : ['大', '小']
@@ -162,6 +324,7 @@ function TrendModeTable({ game, rows, mode }) {
   }
   const valueLabel = mode === 'sum' ? '和值' : '跨度'
   return <table className="derived-trend-table"><thead><tr><th>期号</th><th>{valueLabel}</th><th>{mode === 'sum' ? '和值尾' : '极差'}</th></tr></thead><tbody>{stats.map(row => { const value = row.stats[mode]; return <tr key={row.record.id}><th>{row.record.issue}</th><td className="derived-value">{value}</td><td>{value === '--' ? '--' : mode === 'sum' ? Number(value) % 10 : value}</td></tr> })}</tbody></table>
+  */
 }
 
 function getDigitShape(game, digits) {
@@ -401,7 +564,10 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const summaryHeight = summaryRows.length * 30
   const simulatorHeight = 56
   const canvasHeight = headerHeight + rows.length * rowHeight + simulatorHeight + summaryHeight
-  const renderedCanvasHeight = trendMode === 'basic' ? canvasHeight : 76 + rows.length * 34
+  const derivedBaseHeight = ['fc3d', 'pl3'].includes(game)
+    ? (trendMode === 'span' || trendMode === 'sum' ? 72 : 72)
+    : (trendMode === 'span' ? 64 : (trendMode === 'sum' ? 70 : 104))
+  const renderedCanvasHeight = trendMode === 'basic' ? canvasHeight : derivedBaseHeight + rows.length * 34
   const renderedCanvasWidth = trendMode === 'basic' ? tableWidth : '100%'
   let boundaryOffset = 0
   const groupBoundaries = groups.slice(0, -1).map(group => { boundaryOffset += group.values.length * cell; return issueWidth + boundaryOffset })
@@ -614,7 +780,7 @@ function HistoryList({ history, defaultExpanded = false, alwaysExpanded = false,
   const changePeriod = value => { setPeriod(value); setPage(1) }
   return <section className={`card trend-history trend-fold-card ${expanded ? 'expanded' : ''}`}>{alwaysExpanded ? <div className="trend-collapse-toggle history-static-title"><span><b>历史开奖号码</b><small>共 {history.length} 期</small></span></div> : <button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><b>历史开奖号码</b><small>近 {period} 期 · 每页10期</small></span><ChevronDown size={20}/></button>}
     {expanded && <div className="trend-history-content"><div className="history-head"><span>开奖明细</span>{!showAll && <label className="period-filter"><span>期数</span><select value={period} onChange={event => changePeriod(Number(event.target.value))}>{[10,20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label>}</div>
-    <div className="history-list">{rows.map(record => <button type="button" className="history history-link" onClick={() => onOpen?.(record)} key={record.id}><span>第 {record.issue} 期</span><Balls small groups={[{ values: record.redBalls }, { values: record.blueBalls, accent: true }]}/></button>)}</div>
+    <div className="history-list">{rows.map((record,index) => <button type="button" className="history history-link list-entry" style={{ '--list-index': index }} onClick={() => onOpen?.(record)} key={record.id}><span>第 {record.issue} 期</span><Balls small groups={[{ values: record.redBalls }, { values: record.blueBalls, accent: true }]}/></button>)}</div>
     {!showAll && <div className="history-pagination"><button disabled={page === 1} onClick={() => setPage(current => Math.max(1, current - 1))}>上一页</button><span>{page} / {totalPages}</span><button disabled={page === totalPages} onClick={() => setPage(current => Math.min(totalPages, current + 1))}>下一页</button></div>}
     </div>}
   </section>
@@ -743,6 +909,8 @@ function StatusTrendAnalysis({ history, game }) {
 function Trend({ item, all, back, save, onOpen }) {
   const [activeGame, setActiveGame] = useState(item.game)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerClosing, setPickerClosing] = useState(false)
+  const pickerCloseTimer = useRef(null)
   const initialHistory = useMemo(() => all.filter(record => record.game === activeGame).slice(0, 120), [all, activeGame])
   const [history, setHistory] = useState(initialHistory)
   useEffect(() => {
@@ -762,10 +930,24 @@ function Trend({ item, all, back, save, onOpen }) {
     return [...counts].map(([value,count]) => ({ value:min === 0 ? String(value) : String(value).padStart(2,'0'), count })).sort((a,b) => b.count - a.count || Number(a.value) - Number(b.value))
   }, [frequencyHistory,activeGame])
   const maxFrequency = Math.max(1, ...numbers.map(number => number.count))
+  useEffect(() => () => clearTimeout(pickerCloseTimer.current), [])
+  useEffect(() => {
+    if (!pickerOpen) return undefined
+    const onKeyDown = event => { if (event.key === 'Escape') closePicker() }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [pickerOpen, pickerClosing])
+  const openPicker = () => { clearTimeout(pickerCloseTimer.current); setPickerClosing(false); setPickerOpen(true) }
+  const closePicker = () => {
+    if (!pickerOpen || pickerClosing) return
+    setPickerClosing(true)
+    const duration = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 0 : 180
+    pickerCloseTimer.current = setTimeout(() => { setPickerOpen(false); setPickerClosing(false) }, duration)
+  }
   if (!history.length) return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button><section className="card state"><h2>暂无走势图数据</h2><p>当前彩种暂未加载到开奖数据，请稍后重试。</p></section></main>
-  const chooseGame = game => { setActiveGame(game); setPickerOpen(false); scrollTo(0,0) }
+  const chooseGame = game => { setActiveGame(game); closePicker(); scrollTo(0,0) }
   return <main className="trend-page"><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>
-    <div className="section-head"><div><h1>{activeItem.name}走势图</h1><p>点击右侧图标切换彩种</p></div><button className="trend-game-switch" aria-label="切换彩种" aria-haspopup="dialog" onClick={() => setPickerOpen(true)}><span className={`game-icon ${activeGame}`}>{activeItem.icon}</span><ChevronDown size={15}/></button></div>
+    <div className="section-head"><div><h1>{activeItem.name}走势图</h1><p>点击右侧图标切换彩种</p></div><button className="trend-game-switch" aria-label="切换彩种" aria-haspopup="dialog" aria-expanded={pickerOpen && !pickerClosing} onClick={openPicker}><span className={`game-icon ${activeGame}`}>{activeItem.icon}</span><ChevronDown size={15}/></button></div>
     <section className="card frequency"><h3>号码出现次数 <small>近 {frequencyHistory.length} 期</small></h3><div className={`frequency-bars ${['ssq','dlt','qxc','qlc','kl8'].includes(activeGame) ? 'frequency-bars-scroll' : ''}`}>{numbers.map(number => <div className="frequency-bar-item" key={number.value}><span>{number.value}</span><i><em style={{ width:`${number.count / maxFrequency * 100}%` }}/></i><b>{number.count} 次</b></div>)}</div></section>
     <TraditionalTrendTable key={activeGame} game={activeGame} history={history} save={save}/>
     {activeGame === 'dlt' && <DltHeatTrend history={history}/>}
@@ -773,7 +955,7 @@ function Trend({ item, all, back, save, onOpen }) {
     {activeGame === 'kl8' && <Kl8DataViews history={history}/>}
     {['fc3d','pl3','pl5'].includes(activeGame) && <StatusTrendAnalysis key={`status-${activeGame}`} history={history} game={activeGame}/>}
     <HistoryList history={history} onOpen={record => { const target = all.find(row => row.id === record.id) || record; onOpen?.(target) }}/>
-    {pickerOpen && <div className="game-picker-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPickerOpen(false) }}><section className="game-picker" role="dialog" aria-modal="true" aria-labelledby="game-picker-title"><header><div><h2 id="game-picker-title">选择彩种</h2><p>切换查看对应的走势数据</p></div><button aria-label="关闭" onClick={() => setPickerOpen(false)}>×</button></header><div className="game-picker-grid">{gameOrder.map(game => { const record = all.find(row => row.game === game); const meta = games[game]; return <button className={activeGame === game ? 'active' : ''} onClick={() => chooseGame(game)} key={game}><span className={`game-icon ${game}`}>{record?.icon || meta?.icon}</span><b>{record?.name || meta?.name}</b>{activeGame === game && <small>当前</small>}</button> })}</div></section></div>}
+    {pickerOpen && <div className={`game-picker-backdrop ${pickerClosing ? 'is-closing' : ''}`} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closePicker() }}><section className={`game-picker ${pickerClosing ? 'is-closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="game-picker-title"><header><div><h2 id="game-picker-title">选择彩种</h2><p>切换查看对应的走势数据</p></div><button aria-label="关闭" onClick={closePicker}>×</button></header><div className="game-picker-grid">{gameOrder.map(game => { const record = all.find(row => row.game === game); const meta = games[game]; return <button className={activeGame === game ? 'active' : ''} onClick={() => chooseGame(game)} key={game}><span className={`game-icon ${game}`}>{record?.icon || meta?.icon}</span><b>{record?.name || meta?.name}</b>{activeGame === game && <small>当前</small>}</button> })}</div></section></div>}
   </main>
 }
 
@@ -909,7 +1091,7 @@ function Plans({ plans, remove }) {
   const filteredPlans = useMemo(() => filter === 'all' ? plans : plans.filter(plan => plan.planName.startsWith(rules.find(rule => rule.key === filter)?.name || '')), [plans, filter])
   return <main>
     {plans.length > 0 && <div className="plan-filters" aria-label="按彩种筛选"><button className={filter === 'all' ? 'active' : ''} aria-pressed={filter === 'all'} onClick={event => { const target = event.currentTarget; setFilter('all'); requestAnimationFrame(() => target.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' })) }}>全部 <span>{plans.length}</span></button>{rules.map(rule => { const count = plans.filter(plan => plan.planName.startsWith(rule.name)).length; return <button className={filter === rule.key ? 'active' : ''} aria-pressed={filter === rule.key} onClick={event => { const target = event.currentTarget; setFilter(rule.key); requestAnimationFrame(() => target.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'center' })) }} key={rule.key}>{rule.name} <span>{count}</span></button> })}</div>}
-    {!plans.length ? <div className="state"><Bookmark size={38}/><b>还没有保存的方案</b><p>前往“选号工具”生成并保存</p></div> : !filteredPlans.length ? <div className="state filtered-empty"><Bookmark size={34}/><b>该彩种暂无方案</b><p>请选择其他彩种，或前往选号工具保存方案</p></div> : <div className="cards">{filteredPlans.map(p => <article className="card plan" key={p.id}><header><div><h2>{p.planName}</h2><p>{p.createdAt}</p></div><button className="icon-btn danger" aria-label={`删除${p.planName}方案`} onClick={() => remove(p.id)}><Trash2 size={18}/></button></header>{p.entries.map((e,i) => <div className="entry" key={e.id || i}><PlanEntryLabel text={e.sourceLabel} fallback={String(i+1).padStart(2,'0')}/><Balls groups={e.groups}/></div>)}</article>)}</div>}
+    {!plans.length ? <div className="state"><Bookmark size={38}/><b>还没有保存的方案</b><p>前往“选号工具”生成并保存</p></div> : !filteredPlans.length ? <div className="state filtered-empty"><Bookmark size={34}/><b>该彩种暂无方案</b><p>请选择其他彩种，或前往选号工具保存方案</p></div> : <div className="cards">{filteredPlans.map((p,index) => <article className="card plan list-entry" style={{ '--list-index': index }} key={p.id}><header><div><h2>{p.planName}</h2><p>{p.createdAt}</p></div><button className="icon-btn danger" aria-label={`删除${p.planName}方案`} onClick={() => remove(p.id)}><Trash2 size={18}/></button></header>{p.entries.map((e,i) => <div className="entry" key={e.id || i}><PlanEntryLabel text={e.sourceLabel} fallback={String(i+1).padStart(2,'0')}/><Balls groups={e.groups}/></div>)}</article>)}</div>}
   </main>
 }
 
@@ -1101,6 +1283,7 @@ function App() {
   const navItems = [['home',Home,'首页'],['random',Dices,'选号工具'],['plans',Bookmark,'我的方案'],['profile',UserRound,'我的']]
   const activeNavIndex = Math.max(0, navItems.findIndex(([key]) => key === tab))
   const keepTabActive = !view || ['help','about','security'].includes(view.type)
+  const pageTransitionKey = view ? `${view.type}:${view.item?.id || view.item?.issue || ''}` : `tab:${tab}`
   useEffect(() => { trackAnalytics('page_view',{ page:view?.type || tab, game:view?.item?.game }) },[tab,view?.type,view?.item?.game])
   useEffect(() => {
     const active = Boolean(view || tab !== 'home' || viewStack.length)
@@ -1143,7 +1326,7 @@ function App() {
     window.addEventListener('touchcancel',onEnd,{ passive:true })
     return () => { window.removeEventListener('touchstart',onStart); window.removeEventListener('touchmove',onMove); window.removeEventListener('touchend',onEnd); window.removeEventListener('touchcancel',onEnd); indicator.remove() }
   },[])
-  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content">{view?.type === 'detail' ? <Detail {...view} canExport={Boolean(member?.canExport)} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={(record,history) => showView({type:'detail',item:record,all:history})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage canExport={Boolean(member?.canExport)} open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div>
+  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content"><div className="page-transition" key={pageTransitionKey}>{view?.type === 'detail' ? <Detail {...view} canExport={Boolean(member?.canExport)} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={(record,history) => showView({type:'detail',item:record,all:history})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage canExport={Boolean(member?.canExport)} open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div></div>
     <nav className="bottom-nav" aria-label="主导航" style={{'--nav-index':activeNavIndex}}><i className="nav-selection" aria-hidden="true"/>{navItems.map(([k,Icon,label]) => <button className={tab===k&&keepTabActive?'active':''} aria-current={tab===k&&keepTabActive?'page':undefined} onClick={() => nav(k)} key={k}><Icon/><span>{label}</span></button>)}</nav>{toast && <div className="toast">{toast}</div>}</div>
 }
 createRoot(document.getElementById('root')).render(location.pathname.startsWith('/admin') ? <AdminDashboard/> : <App/>)
