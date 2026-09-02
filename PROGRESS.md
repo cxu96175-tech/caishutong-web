@@ -10,7 +10,7 @@
 - 工作区状态：创建本文件前无未提交改动
 - 当前版本：`package.json` 中为 `1.2.1`
 - 当前阶段：阶段 17 — 其他彩种派生走势图统一
-- 阶段状态：待验收
+- 阶段状态：已发布，待验收
 
 ## 项目范围
 
@@ -202,8 +202,11 @@
 - 完成内容：通用派生表增加彩种标识和逻辑号码组标识；号码组之间补充与基础走势一致的细分隔线；双色球、七乐彩、七星彩、快乐8继续复用统一的灰阶表头、斑马纹、期号吸附列、命中圆标记和移动端横向滚动；大乐透、福彩3D、排列3专用表继续共享同一层视觉收敛规则。
 - 相关文件：`src/main.jsx`、`src/styles.css`、`PROGRESS.md`、`dist/index.html`（构建产物）。
 - 验证结果：`pnpm run build` 通过；`git diff --check` 通过；本地 Vite 页面返回 HTTP 200。
-- 相关提交：未提交。
-- 发布状态：本阶段仅更新本地工作区，未重新部署。
+- 相关提交：`0552640 Unify derived trend view styles`。
+- 正式部署：`https://f071a6b3.caishutong-web.pages.dev`（Production / main，2026-09-02）。
+- HEAD 别名：`https://head.caishutong-web.pages.dev`（已同步至部署 `https://7894f347.caishutong-web.pages.dev`）。
+- 用户端：`https://888888c.xyz`（已验证与生产、HEAD 加载同一 `assets/index-BTwZHeqf.js` 和 `assets/index-CilqaBsJ.css`）。
+- 验证结果：四个入口均返回 HTTP 200；构建、差异检查通过。
 - 待办/风险：需在各彩种实际走势图页逐个切换四种派生视图确认分组边界和长表横向滚动；“合质”按现有产品的“和值”页签处理，未新增独立玩法。
 
 ## 恢复工作流程
