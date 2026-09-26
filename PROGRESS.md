@@ -6,11 +6,11 @@
 
 - 更新时间：2026-09-27
 - 当前分支：以 `git branch --show-current` 为准
-- 基线提交：`fecc7fc Release latest user interface and analytics functions`
-- 工作区状态：存在未提交改动（既有界面、阶段 21 数据校准及阶段 22 数据源统一修复）
+- 基线提交：`d71653b Record derived trend production release`
+- 工作区状态：Pages 发布提交已推送；另有未跟踪的 `lottery-official-data-test` Worker 草稿，未发布。
 - 当前版本：`package.json` 中为 `1.2.1`
 - 当前阶段：阶段 58 — 走势图默认30期与筛选器优化
-- 阶段状态：整合发布中
+- 阶段状态：已发布，待用户验收
 
 ## 项目范围
 
@@ -583,13 +583,14 @@
 - 正式部署：Pages `main` 分支，`https://5caf6bc6.caishutong-web.pages.dev`（2026-09-27）；生产域名及部署地址均返回 HTTP 200，加载 `assets/index-BWz3RtSu.js`、`assets/index-fCbK0aM-.css`。
 - 状态：已发布，待用户验收。
 
-### 阶段 58 — 走势图默认30期与筛选器优化（进行中）
+### 阶段 58 — 走势图默认30期与筛选器优化（待验收）
 
 - 目标：模拟选号的号码分布行完整显示并与位置列对齐；期数下拉菜单贴合产品样式且始终展开在触发器下方；指标状态走势图初次加载默认展示近30期，所有彩种一致。
 - 完成内容：分布占位圆点改为与走势图数字列等宽、等高且不额外占用水平空间；基础走势图期数筛选替换为自定义浮层下拉，支持点击外部/Escape关闭和滚动/缩放重定位；指标状态走势图在初始缓存只有一条记录、完整历史异步加载后自动扩展到所选的30期范围，同时尊重用户手动调整的起止期数；综合数据形态列改为按形态名称使用固定颜色，跨期同形态同色、不同形态可辨。
 - 相关文件：`src/main.jsx`、`src/styles.css`、`PROGRESS.md`。
-- 验证结果：`npm run build`、`git diff --check` 通过。Playwright 本地页面加载正常，但登录页要求授权，未绕过权限；因此受保护的走势图与下拉视觉交互尚未完成浏览器验收。
-- 状态：本地修改，待验收；尚未发布。
+- 验证结果：`npm run build`、`git diff --check` 通过；Pages 生产部署已关联提交 `ebc313b`，自定义域名返回 HTTP 200 并加载本次构建资源。线上只读检查表明排列5接口正常响应，但官方源返回 HTTP 567，当前回退至未验证的第三方公开源。Playwright 本地页面加载正常，但登录页要求授权，未绕过权限；走势图与下拉视觉交互尚未完成浏览器验收。
+- 正式部署：Pages `main`，`https://47788da8.caishutong-web.pages.dev`（2026-09-27）；`https://888888c.xyz/?nav=1` 加载 `assets/index-B_qECIPr.js`、`assets/index-W28e314U.css`。
+- 状态：已发布，待用户验收。
 
 ## 恢复工作流程
 
