@@ -2,8 +2,21 @@ const UPSTREAM_API = 'https://lottery-official-data.cxu96175.workers.dev'
 const isLocalPreview = typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)
 export const API = isLocalPreview ? UPSTREAM_API : '/api'
 const recordsCacheKey = 'caiyan-records-cache-v1'
-const recordsCacheLifetime = 6 * 60 * 60 * 1000
+// 首页缓存只用于首屏占位，不能让旧开奖数据长期成为最终结果。
+const recordsCacheLifetime = 60 * 1000
+const historyCacheLifetime = 60 * 1000
 const historyCache = new Map()
+
+// 福彩/体彩常规开奖集中在 21:15—21:25。开奖窗口内缩短客户端轮询间隔，
+// 其他时间保持低频检查，避免把“用户打开页面才请求”当成同步机制。
+export function isDrawSyncWindow(date = new Date()) {
+  const minutes = date.getHours() * 60 + date.getMinutes()
+  return minutes >= (20 * 60 + 50) && minutes <= (22 * 60 + 30)
+}
+
+export function drawSyncInterval(date = new Date()) {
+  return isDrawSyncWindow(date) ? 60 * 1000 : 5 * 60 * 1000
+}
 
 export function readRecordsCache() {
   try {
@@ -19,22 +32,18 @@ export function writeRecordsCache(records) {
 
 export function shouldRefreshRecords(cached) {
   if (!cached?.records?.length || !cached?.savedAt) return true
-  const now = new Date()
-  const refreshAt = new Date(now)
-  refreshAt.setHours(21, 35, 0, 0)
-  // 每日开奖结束后仅自动更新一次；其余时间沿用已有结果。
-  return now >= refreshAt && Number(cached.savedAt) < refreshAt.getTime()
+  return Date.now() - Number(cached.savedAt) >= recordsCacheLifetime
 }
 
 export const games = {
-  fc3d: { code: 'fcsd', name: '福彩3D', red: 3, blue: 0, time: '21:15', single: true, icon: '3D' },
-  ssq: { code: 'ssq', name: '双色球', red: 6, blue: 1, time: '21:15', icon: '双' },
-  dlt: { code: 'dlt', name: '大乐透', red: 5, blue: 2, time: '21:25', icon: '乐' },
-  pl3: { code: 'pls', name: '排列3', red: 3, blue: 0, time: '21:25', single: true, icon: '排3' },
-  pl5: { code: 'plw', name: '排列5', red: 5, blue: 0, time: '21:25', single: true, icon: '排5' },
-  qxc: { code: 'qxc', name: '7星彩', red: 6, blue: 1, time: '21:25', single: true, icon: '7星' },
-  qlc: { code: 'qlc', name: '七乐彩', red: 7, blue: 1, time: '21:15', icon: '七' },
-  kl8: { code: 'klb', name: '快乐8', red: 20, blue: 0, time: '21:15', icon: '快8' }
+  fc3d: { code: 'fcsd', name: '福彩3D', red: 3, blue: 0, time: '21:15', single: true, icon: '3D', liveUrl: 'https://www.zhcw.com/spzb/kjzb/fczb/', liveLabel: '福彩开奖直播' },
+  ssq: { code: 'ssq', name: '双色球', red: 6, blue: 1, time: '21:15', icon: '双', liveUrl: 'https://www.zhcw.com/spzb/kjzb/fczb/', liveLabel: '福彩开奖直播' },
+  dlt: { code: 'dlt', name: '大乐透', red: 5, blue: 2, time: '21:25', icon: '乐', liveUrl: 'https://m.lottery.gov.cn/kjzb/', liveLabel: '体彩开奖直播' },
+  pl3: { code: 'pls', name: '排列3', red: 3, blue: 0, time: '21:25', single: true, icon: '排3', liveUrl: 'https://m.lottery.gov.cn/kjzb/', liveLabel: '体彩开奖直播' },
+  pl5: { code: 'plw', name: '排列5', red: 5, blue: 0, time: '21:25', single: true, icon: '排5', liveUrl: 'https://m.lottery.gov.cn/kjzb/', liveLabel: '体彩开奖直播' },
+  qxc: { code: 'qxc', name: '7星彩', red: 6, blue: 1, time: '21:25', single: true, icon: '7星', liveUrl: 'https://m.lottery.gov.cn/kjzb/', liveLabel: '体彩开奖直播' },
+  qlc: { code: 'qlc', name: '七乐彩', red: 7, blue: 1, time: '21:15', icon: '七', liveUrl: 'https://www.zhcw.com/spzb/kjzb/fczb/', liveLabel: '福彩开奖直播' },
+  kl8: { code: 'klb', name: '快乐8', red: 20, blue: 0, time: '21:15', icon: '快8', liveUrl: 'https://www.zhcw.com/spzb/kjzb/fczb/', liveLabel: '福彩开奖直播' }
 }
 
 export const gameOrder = ['fc3d', 'ssq', 'dlt', 'pl3', 'pl5', 'qxc', 'qlc', 'kl8']
@@ -82,18 +91,40 @@ async function fetchWithTimeout(url, timeout = 10000) {
 
 function normalizeRecord(game, x) {
   const meta = games[game]
-  const balls = (Array.isArray(x.numbers) ? x.numbers : String(x.numbers || '').split(/[\s,，+|]+/)).filter(Boolean).map(v => meta.single ? String(+v) : String(v).padStart(2, '0'))
+  const balls = (Array.isArray(x.numbers) ? x.numbers : String(x.numbers || '').split(/[\s,，+|]+/))
+    .filter(value => value !== '' && value !== null && value !== undefined)
+    .map(v => meta.single ? String(+v) : String(v).padStart(2, '0'))
   const first = x.firstPrize || (x.prizeRows || []).find(p => p.level === '一等奖')
   return { ...x, id: `${game}-${x.issue}`, game, name: meta.name, icon: meta.icon, drawTime: meta.time, redBalls: balls.slice(0, meta.red), blueBalls: balls.slice(meta.red, meta.red + meta.blue), firstPrizeText: first?.amount ? `单注${money(first.amount)}` : '--', saleAmountText: money(x.saleAmount), poolAmountText: x.poolApplicable === false ? '不适用' : money(x.poolAmount) }
 }
 
+async function fetchGameRecords(game, limit, { fresh = false } = {}) {
+  const meta = games[game]
+  const freshness = fresh ? `&fresh=${Math.floor(Date.now() / 60000)}` : ''
+  // /api/lottery 使用前端彩种 key（fc3d/pl3/pl5/kl8），不要传给上游的
+  // fcsd/pls/plw/klb 代码，否则这四个彩种会被接口判定为不支持。
+  const res = await fetchWithTimeout(`${API}/lottery?game=${encodeURIComponent(game)}&limit=${limit}&v=18${freshness}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const json = await res.json()
+  return (json.records || []).map(x => normalizeRecord(game, x))
+}
+
+function sortRecords(records) {
+  return [...records].sort((a, b) => Number(b.issue) - Number(a.issue))
+}
+
+export function mergeRecords(current, archive) {
+  const byIssue = new Map()
+  // 动态开奖接口优先，避免归档源的旧记录覆盖最新数据。
+  for (const record of [...current, ...archive]) {
+    if (record?.issue && !byIssue.has(String(record.issue))) byIssue.set(String(record.issue), record)
+  }
+  return sortRecords([...byIssue.values()])
+}
+
 export async function fetchRecords(limit = 50) {
   const results = await Promise.allSettled(gameOrder.map(async game => {
-    const meta = games[game]
-    const res = await fetchWithTimeout(`${API}/lottery?game=${meta.code}&limit=${limit}&v=18`)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    const json = await res.json()
-    return (json.records || []).map(x => normalizeRecord(game, x))
+    return fetchGameRecords(game, limit)
   }))
   const all = results.flatMap(x => x.status === 'fulfilled' ? x.value : [])
   if (!all.length) throw new Error('开奖数据暂时不可用')
@@ -102,15 +133,18 @@ export async function fetchRecords(limit = 50) {
 }
 
 export async function fetchHistory(game) {
-  if (historyCache.has(game)) return historyCache.get(game)
+  const cached = historyCache.get(game)
+  if (cached && Date.now() - cached.savedAt < historyCacheLifetime) return cached.promise
   const request = (async () => {
-    const res = await fetchWithTimeout(`/api/history?game=${encodeURIComponent(game)}&v=1`, 30000)
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    // 历史页、走势图和详情统一读取服务端合并后的标准数据；官方源优先，
+    // 归档只补旧期，避免各页面分别竞争不同数据源造成期号不一致。
+    const res = await fetchWithTimeout(`/api/history?game=${encodeURIComponent(game)}&v=2`, 30000)
+    if (!res.ok) throw new Error(`历史接口 HTTP ${res.status}`)
     const json = await res.json()
     const records = (json.records || []).map(x => normalizeRecord(game, x))
     if (!records.length) throw new Error('历史开奖数据为空')
     return records
   })()
-  historyCache.set(game, request)
+  historyCache.set(game, { promise: request, savedAt: Date.now() })
   try { return await request } catch (error) { historyCache.delete(game); throw error }
 }

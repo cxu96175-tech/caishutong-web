@@ -1,7 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import { Home, Dices, Bookmark, RefreshCw, ChevronRight, ChevronDown, Trash2, ArrowLeft, UserRound, Smartphone, Crown, Download, Settings, ShieldCheck, HelpCircle, Info, LogOut, Send, FileText, Database, Mail, Eye, MousePointerClick, Users, Activity, LayoutDashboard } from 'lucide-react'
-import { fetchHistory, fetchRecords, gameOrder, generate, games, readRecordsCache, rules, shouldRefreshRecords } from './data'
+import { Home, Dices, Bookmark, RefreshCw, ChevronRight, ChevronDown, Trash2, ArrowLeft, UserRound, Smartphone, Crown, Download, Settings, ShieldCheck, HelpCircle, Info, LogOut, Send, FileText, Database, Mail, Eye, MousePointerClick, Users, Activity, LayoutDashboard, Radio } from 'lucide-react'
+import { drawSyncInterval, fetchHistory, fetchRecords, gameOrder, generate, games, mergeRecords, readRecordsCache, rules, writeRecordsCache } from './data'
 import { playRules } from './playRules'
 import packageMetadata from '../package.json'
 import './styles.css'
@@ -47,24 +48,50 @@ function BatchExportWorkspace({ job }) {
       return <HeatComponent key={job.exportId} history={job.history} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
     }
     if (job.kind === 'kl8') return <Kl8DataViews key={job.exportId} history={job.history} exportId={job.exportId} viewOverride={job.view} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
+    if (job.kind === 'qxc-history') return <QxcHistoryStrip key={job.exportId} history={job.history} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
+    if (job.kind === 'comprehensive') return <ComprehensiveData key={job.exportId} game={job.game} history={job.history} initialPeriod={job.period} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
     return <Detail key={job.exportId} item={job.item} all={job.all} back={() => {}} onSwitchGame={() => {}} onOpen={() => {}} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
   }
-  return <div className="batch-export-workspace" aria-hidden="true">
-    {renderJob()}
-  </div>
+  const pageTransition = document.querySelector('.page-transition')
+  if (!pageTransition) return null
+  const node = renderJob()
+  if (job.kind === 'detail') return createPortal(React.cloneElement(node, { className: 'batch-export-node' }), pageTransition)
+  const pageClass = ['qxc-history','comprehensive'].includes(job.kind) ? 'detail-page' : 'trend-page'
+  return createPortal(<main className={`${pageClass} batch-export-node`} aria-hidden="true">{node}</main>, pageTransition)
 }
 
 function HomePage({ open, openTrend, openHistory, openRules, canExport = false }) {
   const cached = useMemo(() => readRecordsCache(), [])
   const [all, setAll] = useState(() => cached?.records || []), [loading, setLoading] = useState(() => !cached?.records?.length), [error, setError] = useState(''), [stamp, setStamp] = useState(() => cached?.savedAt ? new Date(cached.savedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '')
+  const allRef = useRef(all)
   const [batchJob, setBatchJob] = useState(null), [batchExporting, setBatchExporting] = useState(false), [batchProgress, setBatchProgress] = useState({ current:0, total:0 })
-  const load = async () => { setLoading(true); setError(''); try { const rows = await fetchRecords(120); setAll(rows); setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) } catch (e) { if (!all.length) setError(e.message) } finally { setLoading(false) } }
-  useEffect(() => { if (shouldRefreshRecords(cached)) load() }, [])
+  // 首页只展示每个彩种的最新一期；历史与走势图按需加载，避免首屏携带 120 期数据。
+  // 部分彩种临时失败时，保留已有记录，避免一次请求把整张首页列表替换成不完整结果。
+  const load = async () => { setLoading(true); setError(''); try { const rows = await fetchRecords(1); setAll(current => { const byGame = new Map(); for (const record of [...rows, ...current]) { if (!record?.game) continue; const previous = byGame.get(record.game); if (!previous || Number(record.issue) > Number(previous.issue)) byGame.set(record.game, record) } const merged = gameOrder.map(game => byGame.get(game)).filter(Boolean); allRef.current = merged; writeRecordsCache(merged); return merged }); setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) } catch (e) { if (!allRef.current.length) setError(e.message) } finally { setLoading(false) } }
+  useEffect(() => {
+    let timer
+    let active = true
+    const refresh = () => { if (active && !document.hidden) load() }
+    // 有缓存也立即向统一 API 校准一次，缓存只做首屏占位，不作为最终开奖结果。
+    refresh()
+    const schedule = () => {
+      timer = setTimeout(() => { refresh(); schedule() }, drawSyncInterval())
+    }
+    schedule()
+    const onFocus = () => refresh()
+    const onVisibility = () => { if (!document.hidden) refresh() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { active = false; clearTimeout(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisibility) }
+  }, [])
   const latest = gameOrder.map(g => all.find(r => r.game === g)).filter(Boolean)
+  const displayRows = gameOrder.map(game => ({ game, record: all.find(record => record.game === game) }))
   const exportBatch = async () => {
     if (!canExport || batchExporting || !latest.length) return
     const exportItems = gameOrder.map(game => ({ game, item:all.find(record => record.game === game) })).filter(entry => entry.item)
-    const total = exportItems.reduce((count, { game }) => count + 3 + (['dlt','ssq'].includes(game) ? 1 : 0) + (game === 'kl8' ? 2 : 0), 0)
+    // 首页批量导出复用内页导出规则：基础走势图（显示/隐藏遗漏各一张）、完整详情图，
+    // 再加上该彩种内页实际提供的冷热图 / 快乐8图表 / 七星彩历史长图。
+    const total = exportItems.reduce((count, { game }) => count + 3 + (['dlt','ssq'].includes(game) ? 1 : 0) + (game === 'kl8' ? 2 : 0) + (game === 'qxc' ? 1 : 0), 0)
     setBatchExporting(true); setBatchProgress({ current:0, total })
     try {
       const histories = Object.fromEntries(await Promise.all(exportItems.map(async ({ game }) => {
@@ -77,12 +104,18 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
         setBatchJob({ ...job, onComplete:resolve })
       })
       for (const { game, item } of exportItems) {
-        await runJob({ kind:'trend', game, history:histories[game], showMisses:true, exportId:`batch-trend-${game}`, filename:`${item.name}-基础走势图-50期.png`, title:`${item.name}基础走势图`, params:'期数：50期 · 遗漏值：显示' })
+        const trendPeriod = Math.min(histories[game]?.length || 0, 50)
+        const patternParams = ['ssq','dlt'].includes(game) ? ' · 连号标记：显示' : ''
+        await runJob({ kind:'trend', game, history:histories[game], showMisses:true, exportId:`batch-trend-${game}`, filename:`${item.name}-基本走势-${trendPeriod}期.png`, title:`${item.name}基本走势`, params:`期数：${trendPeriod}期 · 遗漏值：显示${patternParams}` })
         setBatchJob(null); await waitForPaint()
-        await runJob({ kind:'trend', game, history:histories[game], showMisses:false, exportId:`batch-trend-nomiss-${game}`, filename:`${item.name}-基础走势图-无遗漏-50期.png`, title:`${item.name}基础走势图（无遗漏）`, params:'期数：50期 · 遗漏值：隐藏' })
+        await runJob({ kind:'trend', game, history:histories[game], showMisses:false, exportId:`batch-trend-nomiss-${game}`, filename:`${item.name}-基本走势-无遗漏-${trendPeriod}期.png`, title:`${item.name}基本走势（无遗漏）`, params:`期数：${trendPeriod}期 · 遗漏值：隐藏${patternParams}` })
         setBatchJob(null); await waitForPaint()
         await runJob({ kind:'detail', game, item, all, exportId:`batch-detail-${game}`, filename:`${item.name}-详情-${item.issue}.png`, title:`${item.name}详情`, params:`第 ${item.issue} 期 · ${item.drawDate}` })
         setBatchJob(null); await waitForPaint()
+        if (game === 'qxc') {
+          await runJob({ kind:'qxc-history', game, history:histories[game], exportId:'batch-qxc-history', filename:'七星彩历史开奖长条图-近100期.png', title:'七星彩历史开奖长条图', params:'近100期 · 日期、和值与7个位置奖号' })
+          setBatchJob(null); await waitForPaint()
+        }
         if (['dlt','ssq'].includes(game)) {
           await runJob({ kind:'heat', game, history:histories[game], exportId:`batch-heat-${game}`, filename:`${item.name}-冷热图-10期分析-30期.png`, title:`${item.name}冷热图`, params:'分析：10期 · 显示：30期' })
           setBatchJob(null); await waitForPaint()
@@ -98,7 +131,7 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
     } finally { setBatchJob(null); setBatchExporting(false); setBatchProgress({ current:0, total:0 }) }
   }
   return <main><div className="section-head home-section-head"><div className="home-refresh">{canExport && <button type="button" className="home-batch-export-button" onClick={exportBatch} disabled={batchExporting || !latest.length}><Download size={14}/>{batchExporting ? `导出中 ${batchProgress.current}/${batchProgress.total}` : '一键导出图片'}</button>}{stamp && <span>更新于 {stamp}</span>}<button className="icon-btn" onClick={load} aria-label="刷新"><RefreshCw size={14} className={loading ? 'spin' : ''}/></button></div></div>
-    {loading && !latest.length ? <div className="cards">{[1,2,3].map(i => <div className="card skeleton" key={i}/>)}</div> : error ? <div className="state"><b>加载失败</b><p>{error}</p><button onClick={load}>重新加载</button></div> : <div className="cards">{latest.map((r,index) => <article className="card result-card list-entry" style={{ '--list-index': index }} key={r.id}>
+    {loading && !latest.length ? <div className="cards">{[1,2,3].map(i => <div className="card skeleton" key={i}/>)}</div> : error ? <div className="state"><b>加载失败</b><p>{error}</p><button onClick={load}>重新加载</button></div> : <div className="cards">{displayRows.map(({ game, record:r },index) => r ? <article className="card result-card list-entry" style={{ '--list-index': index }} key={r.id}>
       <header><div className="game"><span className={`game-icon ${r.game}`}>{r.icon}</span><div><h2>{r.name}</h2><p>第 {r.issue} 期</p></div></div><div className="date">{r.drawDate}<small>{r.drawTime} 开奖</small></div></header>
       <Balls groups={[{ values: r.redBalls }, { values: r.blueBalls, accent: true }]}/>
       <div className="home-card-actions" aria-label={`${r.name}快捷入口`}>
@@ -107,6 +140,9 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
         <button onClick={() => openTrend(r, all)}><span>走势图</span></button>
         <button onClick={() => open(r, all)}><span>详情</span></button>
       </div>
+    </article> : <article className="card result-card-pending list-entry" style={{ '--list-index': index }} key={`pending-${game}`}>
+      <header><div className="game"><span className={`game-icon ${game}`}>{games[game].icon}</span><div><h2>{games[game].name}</h2><p>最新期号同步中</p></div></div><div className="date">{games[game].time}<small>等待开奖数据</small></div></header>
+      <div className="home-sync-placeholder">正在同步最新开奖，稍后自动重试</div>
     </article>)}</div>}<p className="notice">数据仅供参考 · 请以官方开奖结果为准</p><BatchExportWorkspace job={batchJob}/></main>
 }
 
@@ -124,15 +160,17 @@ function getTrendGroups(game) {
     }
     return [{ key: String(groupIndex), title: rule.groups.length > 1 ? (group.accent ? '蓝球 / 后区' : '红球 / 前区') : '号码走势', values, count: group.count, accent: Boolean(group.accent), pick: record => groupIndex ? record.blueBalls : record.redBalls }]
   })
-  if (['fc3d', 'pl3'].includes(game)) groups.push({ key:'distribution', title:'号码分布', values:Array.from({ length:10 }, (_, index) => String(index)), count:3, distribution:true, pick:record => record.redBalls })
+  if (['fc3d', 'pl3', 'pl5'].includes(game)) groups.unshift({ key:'distribution', title:'号码分布', values:Array.from({ length:10 }, (_, index) => String(index)), count:game === 'pl5' ? 5 : 3, distribution:true, pick:record => record.redBalls })
   return groups
 }
 
-const trendStatColumns = {
-  fc3d: [['shape','组选形态',72],['sum','和值',52],['span','跨度',52],['oddEven','奇偶比',62],['bigSmall','大小比',62],['mod3','012路比',70]],
-  pl3: [['shape','组选形态',72],['sum','和值',52],['span','跨度',52],['oddEven','奇偶比',62],['bigSmall','大小比',62],['mod3','012路比',70]],
-  pl5: [['sum','和值',52],['oddEven','奇偶比',62],['bigSmall','大小比',62],['primeComposite','质合比',62]]
+function formatTrendDrawNumber(record) {
+  const red = (record?.redBalls || []).map(value => String(value)).join(' ')
+  const blue = (record?.blueBalls || []).map(value => String(value)).join(' ')
+  return blue ? `${red} + ${blue}` : red || '--'
 }
+
+const trendStatColumns = {}
 
 const trendViewModes = [
   ['basic', '基本走势'],
@@ -142,6 +180,42 @@ const trendViewModes = [
   ['sum', '和值走势']
 ]
 const trendPeriodOptions = [30, 50, 100, 300, 500]
+
+function TrendPeriodPicker({ value, options, onChange }) {
+  const [open, setOpen] = useState(false)
+  const [position, setPosition] = useState(null)
+  const triggerRef = useRef(null)
+  const menuRef = useRef(null)
+  const menuWidth = 132
+  const updatePosition = useCallback(() => {
+    const rect = triggerRef.current?.getBoundingClientRect()
+    if (!rect) return
+    setPosition({ top:rect.bottom + 6, left:Math.max(8,Math.min(rect.right - menuWidth,window.innerWidth - menuWidth - 8)), width:menuWidth, maxHeight:Math.max(96,Math.min(320,window.innerHeight - rect.bottom - 14)) })
+  }, [])
+  useEffect(() => {
+    if (!open) return undefined
+    const onPointerDown = event => {
+      if (!triggerRef.current?.contains(event.target) && !menuRef.current?.contains(event.target)) setOpen(false)
+    }
+    const onKeyDown = event => { if (event.key === 'Escape') { setOpen(false); triggerRef.current?.focus() } }
+    updatePosition()
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+    }
+  }, [open, updatePosition])
+  const menu = open && position ? createPortal(<div className="trend-period-menu" role="listbox" aria-label="选择走势图期数" ref={menuRef} style={position}>{options.map(option => <button type="button" role="option" aria-selected={option === value} className={option === value ? 'active' : ''} key={option} onClick={() => { onChange(option); setOpen(false) }}>近 {option} 期</button>)}</div>, document.body) : null
+  return <div className="trend-period-picker">
+    <button type="button" className="trend-period-trigger" aria-label={`显示期数：近 ${value} 期`} aria-haspopup="listbox" aria-expanded={open} ref={triggerRef} onClick={() => { if (!open) updatePosition(); setOpen(current => !current) }}><span>近 {value} 期</span><ChevronDown size={14}/></button>
+    {menu}
+  </div>
+}
 
 function trendCategory(value, mode, group) {
   const number = Number(value)
@@ -301,7 +375,7 @@ function GenericTrendModeTable({ game, rows, mode }) {
   const groups = useMemo(() => getTrendGroups(game).filter(group => !group.distribution), [game])
   const positionMode = mode === 'bigSmall' || mode === 'oddEven'
   const categories = mode === 'oddEven' ? ['奇', '偶'] : ['大', '小']
-  const stats = rows.map((record, index) => ({ record, values: groups.map(group => group.pick(record).filter(Boolean)), stats: getTrendStats(game, record), previous: rows[index - 1] }))
+  const stats = rows.map((record, index) => ({ record, values: groups.map(group => group.pick(record).filter(value => value !== '' && value !== null && value !== undefined)), stats: getTrendStats(game, record), previous: rows[index - 1] }))
   if (positionMode) {
   return <div className="derived-trend-scroll"><table className="derived-trend-table derived-position-table"><thead><tr><th rowSpan="2">期号</th><th rowSpan="2">星期</th><th rowSpan="2" className="derived-draw-head">开奖号码</th>{groups.map(group => <th className="derived-group-head" colSpan="2" key={group.key}>{group.title}</th>)}<th rowSpan="2">和值</th><th rowSpan="2">跨度</th></tr><tr>{groups.flatMap(group => categories.map(category => <th key={group.key + category}>{category}</th>))}</tr></thead><tbody>{stats.map(row => <tr key={row.record.id}><th>{row.record.issue}</th><td>{dltWeekday(row.record)}</td><td className="derived-draw-slot"><DerivedDrawCells record={row.record}/></td>{row.values.flatMap((values, groupIndex) => categories.map(category => { const hits = values.filter(value => trendCategory(value, mode, groups[groupIndex]) === category); return <td className={'derived-category-cell derived-group-cell ' + (category === categories[0] ? 'derived-group-start ' : '') + (hits.length ? 'active ' : '') + (groups[groupIndex].accent ? 'blue' : '')} key={row.record.id + '-' + groupIndex + '-' + category}>{hits.length ? hits.map((value, index) => <span key={String(value) + index}>{value}</span>) : <em>--</em>}</td> }))}<td className="derived-stat-cell strong">{row.stats.sum}</td><td className="derived-stat-cell strong">{row.stats.span}</td></tr>)}</tbody></table></div>
   }
@@ -318,7 +392,7 @@ function TrendModeTable({ game, rows, mode }) {
   const groups = useMemo(() => getTrendGroups(game).filter(group => !group.distribution), [game])
   const positionMode = mode === 'bigSmall' || mode === 'oddEven'
   const categories = mode === 'oddEven' ? ['奇', '偶'] : ['大', '小']
-  const stats = rows.map(record => ({ record, values: groups.map(group => group.pick(record).filter(Boolean)), stats: getTrendStats(game, record) }))
+  const stats = rows.map(record => ({ record, values: groups.map(group => group.pick(record).filter(value => value !== '' && value !== null && value !== undefined)), stats: getTrendStats(game, record) }))
   if (positionMode) {
     return <table className="derived-trend-table derived-position-table"><thead><tr><th rowSpan="2">期号</th>{groups.map(group => <th colSpan="2" key={group.key}>{group.title}</th>)}</tr><tr>{groups.flatMap(group => categories.map(category => <th key={`${group.key}-${category}`}>{category}</th>))}</tr></thead><tbody>{stats.map(row => <tr key={row.record.id}><th>{row.record.issue}</th>{row.values.flatMap((values, groupIndex) => categories.map(category => { const hits = values.filter(value => trendCategory(value, mode, groups[groupIndex]) === category); return <td className={hits.length ? `derived-hit ${groups[groupIndex].accent ? 'derived-blue' : ''}` : ''} key={`${row.record.id}-${groupIndex}-${category}`}>{hits.join(' ')}</td> }))}</tr>)}</tbody></table>
   }
@@ -345,6 +419,7 @@ function getTrendStats(game, record) {
   const modCounts = [0,1,2].map(mod => digits.filter(value => value % 3 === mod).length).join(':')
   const distribution = [digits.filter(value => value <= 3).length, digits.filter(value => value >= 4 && value <= 6).length, digits.filter(value => value >= 7).length].join(':')
   return {
+    draw: formatTrendDrawNumber(record),
     shape: getDigitShape(game, digits),
     sum: digits.reduce((total, value) => total + value, 0),
     span: digits.length ? Math.max(...digits) - Math.min(...digits) : '--',
@@ -354,6 +429,189 @@ function getTrendStats(game, record) {
     distribution,
     primeComposite: countRatio(value => [1,2,3,5,7].includes(value))
   }
+}
+
+function getObservationValues(record) {
+  return [...(record?.redBalls || []), ...(record?.blueBalls || [])]
+    .map(Number)
+    .filter(Number.isFinite)
+}
+
+function getObservationDomain(game) {
+  const rule = rules.find(item => item.key === game)
+  if (!rule) return []
+  return [...new Set(rule.groups.flatMap(group => Array.from({ length: group.max - group.min + 1 }, (_, index) => group.min + index)))]
+}
+
+function getTodayObservation(game, history) {
+  const rows = history.filter(Boolean)
+  if (!rows.length) return { text: '近期开奖数据同步中，暂时没有可用的观察结果。', detail: '数据同步完成后，这里会根据近期已开奖记录补充观察。' }
+  const shortRows = rows.slice(0, Math.min(10, rows.length))
+  const candidates = []
+  const sums = shortRows.map(record => getObservationValues(record).reduce((total, value) => total + value, 0))
+  if (sums.length) {
+    const min = Math.min(...sums)
+    const max = Math.max(...sums)
+    const baselineSums = rows.slice(0, Math.min(30, rows.length)).map(record => getObservationValues(record).reduce((total, value) => total + value, 0))
+    const baselineMin = Math.min(...baselineSums)
+    const baselineMax = Math.max(...baselineSums)
+    const baselineRange = baselineMax - baselineMin
+    const recentRange = max - min
+    const concentration = baselineRange > 0 ? Math.max(0, 1 - recentRange / baselineRange) : 0
+    if (shortRows.length >= 3 && concentration >= 0.25) candidates.push({ kind: 'sum', score: concentration, text: `最近${shortRows.length}期和值集中在 ${min}–${max} 区间。`, detail: `近${baselineSums.length}期整体范围为 ${baselineMin}–${baselineMax}，短期区间宽度收窄约 ${Math.round(concentration * 100)}%。` })
+  }
+  const recentValues = shortRows.flatMap(getObservationValues)
+  if (recentValues.length) {
+    const oddCount = recentValues.filter(value => value % 2 === 1).length
+    const evenCount = recentValues.length - oddCount
+    const oddDeviation = Math.abs(oddCount / recentValues.length - 0.5) * 2
+    const delta = Math.abs(oddCount - evenCount)
+    if (shortRows.length >= 3 && recentValues.length >= 8 && oddDeviation >= 0.15) candidates.push({ kind: 'odd-even', score: oddDeviation, text: `当前奇数出现次数：近${shortRows.length}期 ${oddCount} 次。`, detail: `共统计 ${recentValues.length} 个号码，奇偶为 ${oddCount}:${evenCount}，与均衡状态相差 ${delta} 个。` })
+
+    const spanValues = shortRows.map(record => {
+      const values = getObservationValues(record)
+      return values.length ? Math.max(...values) - Math.min(...values) : 0
+    })
+    const baselineSpanValues = rows.slice(0, Math.min(30, rows.length)).map(record => {
+      const values = getObservationValues(record)
+      return values.length ? Math.max(...values) - Math.min(...values) : 0
+    })
+    const spanMin = Math.min(...spanValues)
+    const spanMax = Math.max(...spanValues)
+    const baselineSpanMin = Math.min(...baselineSpanValues)
+    const baselineSpanMax = Math.max(...baselineSpanValues)
+    const spanBaselineRange = baselineSpanMax - baselineSpanMin
+    const spanConcentration = spanBaselineRange > 0 ? Math.max(0, 1 - (spanMax - spanMin) / spanBaselineRange) : 0
+    if (shortRows.length >= 3 && spanConcentration >= 0.25) candidates.push({ kind: 'span', score: spanConcentration, text: `最近${shortRows.length}期跨度集中在 ${spanMin}–${spanMax} 区间。`, detail: `近${baselineSpanValues.length}期跨度整体范围为 ${baselineSpanMin}–${baselineSpanMax}，近期跨度波动收窄约 ${Math.round(spanConcentration * 100)}%。` })
+
+    const repeatedDraws = shortRows.filter(record => {
+      const values = getObservationValues(record)
+      return values.length > new Set(values).size
+    }).length
+    if (shortRows.length >= 3 && repeatedDraws >= Math.max(2, Math.ceil(shortRows.length * 0.4))) candidates.push({ kind: 'repeat', score: repeatedDraws / shortRows.length, text: `近${shortRows.length}期有 ${repeatedDraws} 期出现同号。`, detail: '这里仅统计同期开奖中的重复号码，不延伸为下一期判断。' })
+  }
+  const omissionRows = rows.slice(0, Math.min(30, rows.length))
+  const domain = getObservationDomain(game)
+  const ranked = domain.map(value => {
+    const latestIndex = omissionRows.findIndex(record => getObservationValues(record).includes(value))
+    return { value, omission: latestIndex === -1 ? omissionRows.length : latestIndex }
+  }).sort((a, b) => b.omission - a.omission || a.value - b.value)
+  const top = ranked[0]
+  if (top && omissionRows.length >= 8 && top.omission >= Math.max(8, Math.ceil(omissionRows.length * 0.55))) {
+    const omissionDetail = top.omission >= omissionRows.length ? `数字 ${top.value} 在最近${omissionRows.length}期中尚未出现` : `数字 ${top.value} 已连续 ${top.omission} 期未出现`
+    const runnerUp = ranked[1]
+    const comparison = runnerUp ? `，次大遗漏为数字 ${runnerUp.value} 的 ${runnerUp.omission} 期` : ''
+    const omissionRatio = top.omission / omissionRows.length
+    candidates.push({ kind: 'omission', score: Math.min(0.55, Math.max(0, (omissionRatio - 0.5) / 0.5)), text: `最近${omissionRows.length}期最大遗漏数字：${top.value}。`, detail: `${omissionDetail}${comparison}。` })
+  }
+  const rankedCandidates = candidates.sort((a, b) => b.score - a.score)
+  const strongestNonOmission = rankedCandidates.find(candidate => candidate.kind !== 'omission')
+  const omissionCandidate = rankedCandidates.find(candidate => candidate.kind === 'omission')
+  // 遗漏只有在明显强于其它指标时才成为主观察，避免所有彩种都落到同一种文案。
+  const standout = omissionCandidate && strongestNonOmission && omissionCandidate.score < strongestNonOmission.score + 0.12
+    ? strongestNonOmission
+    : rankedCandidates[0]
+  if (standout) {
+    const supporting = rankedCandidates.find(candidate => candidate !== standout)
+    const detail = supporting ? `${standout.detail} 另有${supporting.text.replace(/。$/, '')}。` : standout.detail
+    return { ...standout, detail }
+  }
+  return { text: '近期数据波动较均衡，暂未发现明显偏离。', detail: `已检查近${Math.min(rows.length, 30)}期的和值、奇偶、跨度、同号与遗漏，当前没有单项明显脱离常态。` }
+}
+
+function TodayObservation({ game, history, loading = false }) {
+  const observation = useMemo(() => getTodayObservation(game, history), [game, history])
+  return <section className="card today-observation-card" aria-label="今日观察">
+    <header><h3>今日观察</h3><span>{loading ? '同步中…' : '仅描述已开奖数据'}</span></header>
+    <p className="today-observation-summary">{loading ? '正在同步近期数据…' : observation.text}</p>
+    {!loading && observation.detail && <p className="today-observation-detail">{observation.detail}</p>}
+  </section>
+}
+
+const comprehensiveShapeGames = new Set(['fc3d', 'pl3', 'pl5'])
+const comprehensiveShapeClasses = Object.freeze({
+  豹子:'shape-baozi', 五同:'shape-five-kind', 四同:'shape-four-kind', 葫芦:'shape-full-house',
+  三同:'shape-three-kind', 组三:'shape-group3', 两对:'shape-two-pair', 一对:'shape-one-pair',
+  组六:'shape-group6', 全异:'shape-all-different'
+})
+
+function comprehensiveShapeClass(shape) {
+  return comprehensiveShapeClasses[shape] || 'shape-default'
+}
+
+function comprehensiveNumberLabel(record, game) {
+  const red = (record?.redBalls || []).map(value => String(value))
+  const blue = (record?.blueBalls || []).map(value => String(value))
+  if (game === 'ssq' || game === 'dlt') return `${red.join(' ')}${blue.length ? `  +  ${blue.join(' ')}` : ''}`
+  return red.join(' ')
+}
+
+function getComprehensiveColumns(game) {
+  const columns = [
+    { key: 'issue', label: '期号', className: 'issue' },
+    { key: 'draw', label: '奖号', className: 'draw' }
+  ]
+  if (comprehensiveShapeGames.has(game)) columns.push({ key: 'shape', label: '形态', className: 'shape' })
+  columns.push(
+    { key: 'sum', label: game === 'dlt' || game === 'ssq' ? '前区和值' : '和值', className: 'sum' },
+    { key: 'span', label: game === 'dlt' || game === 'ssq' ? '前区跨度' : '跨度', className: 'span' },
+    { key: 'oddEven', label: game === 'dlt' || game === 'ssq' ? '前区奇偶比' : '奇偶比', className: 'odd-even' },
+    { key: 'bigSmall', label: game === 'dlt' || game === 'ssq' ? '前区大小比' : '大小比', className: 'big-small' },
+    { key: 'route', label: game === 'pl5' ? '质合比' : '012路比', className: 'route' }
+  )
+  return columns
+}
+
+function getComprehensiveRow(game, record) {
+  const stats = getTrendStats(game, record)
+  return {
+    issue: record?.issue || '--',
+    draw: comprehensiveNumberLabel(record, game),
+    shape: comprehensiveShapeGames.has(game) ? stats.shape : null,
+    sum: stats.sum,
+    span: stats.span,
+    oddEven: stats.oddEven,
+    bigSmall: stats.bigSmall,
+    route: game === 'pl5' ? stats.primeComposite : stats.mod3
+  }
+}
+
+function ComprehensiveData({ game, history, loading = false, canExport = false, exportId = `detail-export-${game}-comprehensive`, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams, initialPeriod = 20 }) {
+  const [period, setPeriod] = useState(initialPeriod)
+  const [exporting, setExporting] = useState(false), [exportError, setExportError] = useState('')
+  const rows = useMemo(() => history.slice(0, period).map(record => getComprehensiveRow(game, record)).reverse(), [game, history, period])
+  const columns = useMemo(() => getComprehensiveColumns(game), [game])
+  const periodOptions = useMemo(() => {
+    const values = [10, 20, 30, 50, 100]
+    if (history.length && !values.includes(history.length)) values.push(history.length)
+    return values.filter(value => value <= Math.max(history.length, 20)).sort((a, b) => a - b)
+  }, [history.length])
+  const activePeriod = Math.min(period, Math.max(history.length, 20))
+  const columnWeights = { issue:1, draw:.9, shape:.85, sum:.78, span:.78, oddEven:1, bigSmall:1, route:1 }
+  const totalColumnWeight = columns.reduce((total, column) => total + (columnWeights[column.key] || 1), 0)
+  const exportImage = useCallback(async () => {
+    if (exporting || loading || !rows.length) return
+    setExporting(true); setExportError('')
+    try {
+      await exportTrendElement(exportId, exportFilename || `${games[game]?.name || game}-综合数据-近${rows.length}期.png`, { title:exportTitle || `${games[game]?.name || game}综合数据`, params:exportParams || `近${rows.length}期` }, { fitWidth:true, hideInExport:['.comprehensive-export-actions','.comprehensive-data-export-error'] })
+      trackAnalytics('export_chart', { page:'detail', game, chart:'comprehensive' })
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : '导出失败，请重试')
+      throw error
+    } finally { setExporting(false) }
+  }, [exporting, loading, rows.length, exportId, exportFilename, exportTitle, exportParams, game])
+  useEffect(() => {
+    if (!autoExport || loading) return undefined
+    let active = true
+    exportImage().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
+    return () => { active = false }
+  }, [autoExport, loading, rows.length])
+  if (loading && !history.length) return <section className="card comprehensive-data-card comprehensive-data-loading" aria-label="综合数据"><header><div><h3>综合数据</h3></div><span>同步中…</span></header><div>正在加载近期数据</div></section>
+  return <section className="card comprehensive-data-card" id={exportId} aria-label="综合数据">
+    <header className="comprehensive-data-header"><div><h3>综合数据</h3></div><div className="comprehensive-export-actions"><label><select value={activePeriod} onChange={event => setPeriod(Number(event.target.value))} aria-label="综合数据期数">{periodOptions.map(value => <option value={value} key={value}>近{value}期</option>)}</select></label>{canExport && <button type="button" className="detail-export-button comprehensive-export-button" disabled={exporting || loading || !rows.length} onClick={() => { exportImage().catch(() => {}) }}><Download size={14}/>{exporting ? '生成中…' : '导出综合图'}</button>}</div></header>
+    {exportError && <p className="comprehensive-data-export-error">综合数据导出失败，请重试</p>}
+    {!rows.length ? <div className="comprehensive-data-empty">暂无可用的历史开奖数据</div> : <div className="comprehensive-data-scroll"><table className="comprehensive-data-table"><colgroup>{columns.map(column => <col key={column.key} style={{ width:`${(columnWeights[column.key] || 1) / totalColumnWeight * 100}%` }}/>)}</colgroup><thead><tr>{columns.map(column => <th className={`comprehensive-col-${column.className}`} key={column.key}>{column.label}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={row.issue}>{columns.map(column => <td className={`comprehensive-col-${column.className}`} key={column.key}><span className={column.key === 'draw' ? 'comprehensive-number' : column.key === 'shape' ? `comprehensive-shape ${comprehensiveShapeClass(row.shape)}` : ''}>{row[column.key] ?? '--'}</span></td>)}</tr>)}</tbody></table></div>}
+  </section>
 }
 
 const detailMetricColors = ['#6557df','#9250e8','#ff754b','#ff9f2f','#f3df22','#7ee590']
@@ -402,12 +660,13 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const totalCells = groups.reduce((sum, group) => sum + group.values.length, 0)
   const statWidth = statColumns.reduce((sum, column) => sum + column[2], 0)
   const cell = 28
-  const rowHeight = 34, issueWidth = 78, headerHeight = 64
-  const tableWidth = issueWidth + totalCells * cell + statWidth
+  const rowHeight = 34, serialWidth = 42, issueWidth = 78, headerHeight = 64
+  const tableWidth = serialWidth + issueWidth + totalCells * cell + statWidth
+  const groupStart = serialWidth + issueWidth
   const rowData = useMemo(() => {
     const misses = groups.map(group => Object.fromEntries(group.values.map(value => [value, 0])))
     return rows.map(record => ({ record, stats: getTrendStats(game, record), groups: groups.map((group, groupIndex) => {
-      const hits = group.pick(record).filter(Boolean).map(value => group.values[0]?.length === 2 ? String(value).padStart(2,'0') : String(Number(value)))
+      const hits = group.pick(record).filter(value => value !== '' && value !== null && value !== undefined).map(value => group.values[0]?.length === 2 ? String(value).padStart(2,'0') : String(Number(value)))
       const values = group.values.map(value => { const hitCount = hits.filter(hit => hit === value).length; if (hitCount) { misses[groupIndex][value] = 0; return { value, hit: true, hitCount, miss: 0 } } misses[groupIndex][value] += 1; return { value, hit: false, hitCount: 0, miss: misses[groupIndex][value] } })
       return { hits, values }
     }) }))
@@ -481,43 +740,69 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   }
   const drawExportLines = (canvas,targetWidth,targetHeight) => {
     const context = canvas.getContext('2d')
+    if (!context || !targetWidth || !targetHeight) return
     const scaleX = canvas.width / targetWidth, scaleY = canvas.height / targetHeight
+    const scale = Math.min(scaleX,scaleY)
+    const hitRadius = 12.6 * scale
+    const hitCircles = []
+    let groupOffset = 0
+    groups.forEach((group,groupIndex) => {
+      rowData.forEach((row,rowIndex) => row.groups[groupIndex].values.forEach((cellData,valueIndex) => {
+        if (!cellData.hit) return
+        hitCircles.push({
+          x:(groupStart + groupOffset + valueIndex * cell + cell / 2) * scaleX,
+          y:(headerHeight + rowIndex * rowHeight + rowHeight / 2) * scaleY
+        })
+      }))
+      groupOffset += group.values.length * cell
+    })
+    const drawVisibleSegment = (from,to) => {
+      const ax = (groupStart + from.x) * scaleX
+      const ay = (headerHeight + from.y) * scaleY
+      const bx = (groupStart + to.x) * scaleX
+      const by = (headerHeight + to.y) * scaleY
+      const dx = bx - ax, dy = by - ay, lengthSquared = dx * dx + dy * dy
+      if (!lengthSquared) return
+      const length = Math.sqrt(lengthSquared)
+      const blocked = []
+      hitCircles.forEach(circle => {
+        const projection = ((circle.x - ax) * dx + (circle.y - ay) * dy) / lengthSquared
+        const clampedProjection = Math.max(0,Math.min(1,projection))
+        const closestX = ax + dx * clampedProjection
+        const closestY = ay + dy * clampedProjection
+        const distanceSquared = (circle.x - closestX) ** 2 + (circle.y - closestY) ** 2
+        if (distanceSquared > hitRadius * hitRadius) return
+        const offset = Math.sqrt(Math.max(0,hitRadius * hitRadius - distanceSquared)) / length
+        blocked.push([Math.max(0,projection - offset),Math.min(1,projection + offset)])
+      })
+      blocked.sort((left,right) => left[0] - right[0])
+      const merged = blocked.reduce((ranges,current) => {
+        const previous = ranges.at(-1)
+        if (previous && current[0] <= previous[1]) previous[1] = Math.max(previous[1],current[1])
+        else ranges.push([...current])
+        return ranges
+      },[])
+      let cursor = 0
+      const drawRange = (start,end) => {
+        if (end - start <= 0.002) return
+        context.beginPath()
+        context.moveTo(ax + dx * start,ay + dy * start)
+        context.lineTo(ax + dx * end,ay + dy * end)
+        context.stroke()
+      }
+      merged.forEach(([start,end]) => { drawRange(cursor,start); cursor = Math.max(cursor,end) })
+      drawRange(cursor,1)
+    }
     context.save()
     context.setTransform(1,0,0,1,0,0)
-    context.lineWidth = 1.6 * Math.min(scaleX,scaleY)
+    context.lineWidth = 1.6 * scale
     context.lineCap = 'round'
     context.strokeStyle = '#A0A0A0'
     context.globalAlpha = .85
     lines.forEach(line => {
       if (line.distribution || (game === 'ssq' && !line.accent)) return
-      line.segments.forEach(segment => {
-        context.beginPath()
-        context.moveTo((issueWidth + segment.from.x) * scaleX,(headerHeight + segment.from.y) * scaleY)
-        context.lineTo((issueWidth + segment.to.x) * scaleX,(headerHeight + segment.to.y) * scaleY)
-        context.stroke()
-      })
+      line.segments.forEach(segment => drawVisibleSegment(segment.from,segment.to))
     })
-    context.globalAlpha = 1
-    const groupOffsets = groups.map((group,index) => groups.slice(0,index).reduce((sum,item) => sum + item.values.length * cell,0))
-    rowData.forEach((row,rowIndex) => row.groups.forEach((rowGroup,groupIndex) => {
-      const group = groups[groupIndex]
-      rowGroup.values.forEach((cellData,valueIndex) => {
-        if (!cellData.hit) return
-        const centerX = (issueWidth + groupOffsets[groupIndex] + valueIndex * cell + cell / 2) * scaleX
-        const centerY = (headerHeight + rowIndex * rowHeight + rowHeight / 2) * scaleY
-        const radius = 12.5 * Math.min(scaleX,scaleY)
-        const pattern = showPatterns && cellData.patternHit
-        context.beginPath()
-        context.arc(centerX,centerY,radius,0,Math.PI*2)
-        context.fillStyle = pattern ? '#844FE4' : group.distribution ? (cellData.hitCount > 1 ? '#FF9F43' : '#6687F5') : group.accent ? '#3E7BE9' : '#FF5066'
-        context.fill()
-        context.fillStyle = '#FFFFFF'
-        context.font = `900 ${12 * Math.min(scaleX,scaleY)}px -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif`
-        context.textAlign = 'center'
-        context.textBaseline = 'middle'
-        context.fillText(cellData.value,centerX,centerY + .25 * scaleY)
-      })
-    }))
     context.restore()
   }
   const exportHighResolution = async () => {
@@ -528,30 +813,17 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     setExporting(true)
     try {
       if (scroller) scroller.scrollLeft = 0
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
-      await document.fonts?.ready
-      const { default:html2canvas } = await import('html2canvas')
-      const targetWidth = target.scrollWidth, targetHeight = target.scrollHeight
-      let canvas = await html2canvas(target,{ backgroundColor:'#ffffff', scale:3, useCORS:true, logging:false, width:targetWidth, height:targetHeight, windowWidth:targetWidth, windowHeight:targetHeight, scrollX:0, scrollY:0, onclone:clonedDocument => {
-        const cloneTarget = clonedDocument.getElementById(exportTargetId)
-        if (!cloneTarget) return
-        cloneTarget.closest('.batch-export-workspace')?.style.setProperty('opacity','1')
-        const cloneScroller = cloneTarget.closest('.trend-scroll')
-        if (cloneScroller) { cloneScroller.scrollLeft = 0; cloneScroller.style.overflow = 'visible' }
-        cloneTarget.querySelectorAll('.trend-issue').forEach(element => { element.style.position = 'relative'; element.style.left = '0' })
-        cloneTarget.querySelectorAll('.trend-lines').forEach(element => { element.style.display = 'none' })
-      } })
-      if (trendMode === 'basic' && !['dlt','kl8'].includes(game)) drawExportLines(canvas,targetWidth,targetHeight)
       const modeLabel = trendViewModes.find(([key]) => key === trendMode)?.[1] || '基本走势'
-      canvas = appendExportHeader(canvas, {
+      await exportTrendElement(exportTargetId, exportFilename || `${games[game]?.name || game}-${modeLabel}-${rows.length}期.png`, {
         title: exportTitle || `${games[game]?.name || game}${modeLabel}`,
         params: exportParams ?? `期数：${rows.length}期${trendMode === 'basic' ? ` · 遗漏值：${showMisses ? '显示' : '隐藏'}${['ssq','dlt'].includes(game) ? ` · 连号标记：${showPatterns ? '显示' : '隐藏'}` : ''}` : ''}`
+      }, {
+        fullWidth: true,
+        redrawTrendLines: trendMode === 'basic' && !['dlt','kl8'].includes(game),
+        drawOverlay: (canvas,width,height) => {
+          if (trendMode === 'basic' && !['dlt','kl8'].includes(game)) drawExportLines(canvas,width,height)
+        }
       })
-      canvas = await appendExportWatermark(canvas)
-      const link = document.createElement('a')
-      link.download = exportFilename || `${games[game]?.name || game}-${modeLabel}-${rows.length}期.png`
-      link.href = canvas.toDataURL('image/png',1)
-      link.click()
       trackAnalytics('export_chart',{ page:'trend', game })
     } finally { if (scroller) scroller.scrollLeft = previousScrollLeft; setExporting(false) }
   }
@@ -570,14 +842,14 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const renderedCanvasHeight = trendMode === 'basic' ? canvasHeight : derivedBaseHeight + rows.length * 34
   const renderedCanvasWidth = trendMode === 'basic' ? tableWidth : '100%'
   let boundaryOffset = 0
-  const groupBoundaries = groups.slice(0, -1).map(group => { boundaryOffset += group.values.length * cell; return issueWidth + boundaryOffset })
+  const groupBoundaries = groups.slice(0, -1).map(group => { boundaryOffset += group.values.length * cell; return serialWidth + issueWidth + boundaryOffset })
   return <section className={`card classic-trend trend-fold-card ${expanded ? 'expanded' : ''} ${showPatterns ? 'show-pattern-hits' : ''}`} style={{ '--trend-table-width':`${tableWidth}px` }}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><b>基础走势图</b><small>近 {rows.length} 期 · 号码走势与遗漏统计</small></span><ChevronDown size={20}/></button>
-    {expanded && <><div className="trend-view-tabs" role="tablist" aria-label="走势类型">{trendViewModes.map(([key,label]) => <button type="button" role="tab" aria-selected={trendMode === key} className={trendMode === key ? 'active' : ''} onClick={() => setTrendMode(key)} key={key}>{label}</button>)}</div><div className="trend-fold-controls"><span>横向滑动查看更多号码</span><div className="trend-filter-actions">{trendMode === 'basic' && <><label className="pattern-filter"><input type="checkbox" checked={showMisses} onChange={event => setShowMisses(event.target.checked)}/><i/><span>遗漏值</span></label>{['ssq','dlt'].includes(game) && <label className="pattern-filter"><input type="checkbox" checked={showPatterns} onChange={event => setShowPatterns(event.target.checked)}/><i/><span>连号标记</span></label>}</>}<button className="trend-export-button" disabled={exporting} onClick={exportHighResolution}><Download size={15}/>{exporting ? '生成中…' : '导出高清图'}</button><label className="period-filter"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{trendPeriodOptions.map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div></div>
+    {expanded && <><div className="trend-view-tabs" role="tablist" aria-label="走势类型">{trendViewModes.map(([key,label]) => <button type="button" role="tab" aria-selected={trendMode === key} className={trendMode === key ? 'active' : ''} onClick={() => setTrendMode(key)} key={key}>{label}</button>)}</div><div className="trend-fold-controls"><span>横向滑动查看更多号码</span><div className="trend-filter-actions">{trendMode === 'basic' && <><label className="pattern-filter"><input type="checkbox" checked={showMisses} onChange={event => setShowMisses(event.target.checked)}/><i/><span>遗漏值</span></label>{['ssq','dlt'].includes(game) && <label className="pattern-filter"><input type="checkbox" checked={showPatterns} onChange={event => setShowPatterns(event.target.checked)}/><i/><span>连号标记</span></label>}</>}<button className="trend-export-button" disabled={exporting} onClick={exportHighResolution}><Download size={15}/>{exporting ? '生成中…' : '导出高清图'}</button><TrendPeriodPicker value={period} options={trendPeriodOptions} onChange={setPeriod}/></div></div>
     <div className="trend-scroll"><div className="trend-canvas" id={exportTargetId} style={{ width: renderedCanvasWidth, height: renderedCanvasHeight, '--trend-cell-size':`${cell}px` }}>
       {trendMode === 'basic' ? <>
-      <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
-      <div className="trend-number-head" style={{ left: issueWidth, width: totalCells * cell, height: 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
-      {showLines && game !== 'kl8' && <svg className="trend-lines" data-line-renderer="segments-v3" preserveAspectRatio="none" style={{ left:issueWidth, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => !line.distribution && (game !== 'ssq' || line.accent) ? line.segments.map((segment,segmentIndex) => <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={line.color} strokeWidth="1.6" strokeLinecap="round" opacity=".85"/>) : [])}</svg>}
+      <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-serial-head" style={{ width: serialWidth, height: headerHeight }}>序号</div><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
+      <div className="trend-number-head" style={{ left: groupStart, width: totalCells * cell, height: 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
+      {showLines && game !== 'kl8' && <svg className="trend-lines" data-line-renderer="segments-v3" preserveAspectRatio="none" style={{ left:groupStart, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => !line.distribution && (game !== 'ssq' || line.accent) ? line.segments.map((segment,segmentIndex) => <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={line.color} strokeWidth="1.6" strokeLinecap="round" opacity=".85"/>) : [])}</svg>}
       {groupBoundaries.map((left, index) => <span className="trend-group-divider" style={{ left, height:canvasHeight }} key={index}/>) }
       <div className="trend-body" style={{ top: headerHeight }}>{rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}><div className="trend-issue" style={{ width: issueWidth }}>{record.issue}</div>{rowGroups.flatMap((group, groupIndex) => group.values.map(cellData => <div className={`trend-cell ${cellData.hit ? `hit ${groups[groupIndex].accent ? 'hit-blue' : ''} ${cellData.patternHit ? 'pattern-hit' : ''} ${groups[groupIndex].distribution ? `distribution-hit ${cellData.hitCount > 1 ? 'repeat-hit' : ''}` : ''}` : ''}`} style={{ width: cell, height: rowHeight }} key={`${record.id}-${groupIndex}-${cellData.value}`}>{cellData.hit ? <b>{cellData.value}{groups[groupIndex].distribution && cellData.hitCount > 1 && <i>{cellData.hitCount}</i>}</b> : <span>{showMisses ? cellData.miss : ''}</span>}</div>))}{statColumns.map(([key,,width]) => <div className={`trend-stat ${key === 'shape' ? `shape-${stats[key] === '豹子' ? 'baozi' : stats[key] === '组三' ? 'group3' : 'group6'}` : ''}`} style={{ width, height: rowHeight }} key={`${record.id}-${key}`}><span>{stats[key]}</span></div>)}</div>)}<div className="trend-simulator" style={{ width:tableWidth }}><div className="trend-simulator-label" style={{ width:issueWidth }}>模拟选号</div>{groups.flatMap(group => group.values.map(value => group.distribution ? <span className="sim-placeholder" style={{ width:cell }} key={`${group.key}-${value}`}/> : <button className={(simulation[group.key] || []).includes(value) ? 'selected' : ''} style={{ width:cell }} onClick={() => chooseSimulation(group,value)} key={`${group.key}-${value}`}>{value}</button>))}<span style={{ width:statWidth }}/></div>{summaryRows.map(summary => <div className="trend-summary-row" style={{ height:30 }} key={summary.key}><div className="trend-summary-label" style={{ width:issueWidth }}>{summary.label}</div>{summary.groups.flatMap((values, groupIndex) => values.map((value, valueIndex) => <div className="trend-summary-cell" style={{ width:cell }} key={`${summary.key}-${groupIndex}-${valueIndex}`}>{value}</div>))}<div className="trend-summary-spacer" style={{ width:statWidth }}/></div>)}</div>
       </> : <TrendModeTable game={game} rows={rows} mode={trendMode}/>}
@@ -639,26 +911,88 @@ async function appendExportWatermark(canvas) {
 
 async function exportTrendElement(id, filename, exportMeta, captureOptions = {}) {
   const target = document.getElementById(id)
-  if (!target) return
+  if (!target) throw new Error('找不到要导出的内容')
   await document.fonts?.ready
   const { default:html2canvas } = await import('html2canvas')
+  const renderScale = 3
   const fitWidth = captureOptions.fitWidth === true
+  const fullWidth = captureOptions.fullWidth === true
+  const redrawTrendLines = captureOptions.redrawTrendLines === true
   const withHeader = captureOptions.withHeader !== false
   const addCardDividers = captureOptions.addCardDividers === true
-  const captureWidth = Math.max(1, Math.round(fitWidth ? target.getBoundingClientRect().width : target.scrollWidth))
-  const captureHeight = Math.max(1, Math.round(target.scrollHeight))
-  const captured = await html2canvas(target,{ backgroundColor:'#fff', scale:3, useCORS:true, logging:false, width:captureWidth, height:captureHeight, windowWidth:captureWidth, windowHeight:captureHeight, onclone:clonedDocument => {
+  const matrixColumns = Number(captureOptions.matrixColumns) > 0 ? Number(captureOptions.matrixColumns) : 0
+  const hideInExport = Array.isArray(captureOptions.hideInExport) ? captureOptions.hideInExport : []
+  const matrixMinWidth = matrixColumns ? matrixColumns * 330 + (matrixColumns - 1) * 10 + 28 : 0
+  const captureWidth = Math.max(1, Math.round(matrixColumns ? Math.max(target.scrollWidth, matrixMinWidth) : (fitWidth ? target.getBoundingClientRect().width : target.scrollWidth)))
+  const captureHeight = Math.max(1, Math.round(Math.max(target.scrollHeight, target.getBoundingClientRect().height)))
+  const renderHeight = captureHeight + (matrixColumns ? 1024 : (addCardDividers ? 512 : 0))
+  let clonedContentHeight = captureHeight
+  const viewportWidth = Math.max(1, Math.round(fullWidth ? captureWidth : window.innerWidth || document.documentElement.clientWidth || captureWidth))
+  const viewportHeight = Math.max(1, Math.round(fullWidth ? renderHeight : window.innerHeight || document.documentElement.clientHeight || renderHeight))
+  let captured = await html2canvas(target,{ backgroundColor:'#fff', scale:renderScale, useCORS:true, logging:false, width:captureWidth, height:renderHeight, windowWidth:viewportWidth, windowHeight:viewportHeight, scrollX:fullWidth ? 0 : window.scrollX, scrollY:fullWidth ? 0 : window.scrollY, onclone:clonedDocument => {
     const cloneTarget = clonedDocument.getElementById(id)
     if (!cloneTarget) return
-    cloneTarget.closest('.batch-export-workspace')?.style.setProperty('opacity','1')
-    if (fitWidth) {
-      cloneTarget.style.width = `${captureWidth}px`
-      cloneTarget.style.maxWidth = `${captureWidth}px`
-      cloneTarget.style.overflow = 'visible'
+    cloneTarget.closest('.batch-export-node')?.style.setProperty('opacity','1')
+    hideInExport.forEach(selector => cloneTarget.querySelectorAll(selector).forEach(element => { element.style.display = 'none' }))
+    if (fullWidth) {
+      const cloneScroller = cloneTarget.closest('.trend-scroll')
+      if (cloneScroller) {
+        cloneScroller.scrollLeft = 0
+        cloneScroller.style.overflow = 'visible'
+      }
+      cloneTarget.querySelectorAll('.trend-issue').forEach(element => { element.style.position = 'relative'; element.style.left = '0' })
+      if (redrawTrendLines) cloneTarget.querySelectorAll('.trend-lines').forEach(element => { element.style.display = 'none' })
+    }
+    if (matrixColumns) {
+      const matrixGrid = cloneTarget.querySelector('.kl8-matrix-grid')
+      if (matrixGrid) {
+        cloneTarget.style.width = `${captureWidth}px`
+        cloneTarget.style.minWidth = `${captureWidth}px`
+        matrixGrid.style.gridTemplateColumns = `repeat(${matrixColumns}, minmax(330px, 1fr))`
+      }
+    }
+    // The detail page keeps its normal full-width layout, but the exported
+    // cold/hot card needs a little breathing room from the image edges.
+    if (addCardDividers) {
+      const detailOverview = [...cloneTarget.children].find(element => element.classList.contains('detail-overview'))
+      if (detailOverview) {
+        detailOverview.style.background = 'transparent'
+        detailOverview.style.border = '0'
+        detailOverview.style.boxShadow = 'none'
+        const detailHero = [...detailOverview.children].find(element => element.classList.contains('detail-hero'))
+        if (detailHero) {
+          detailHero.style.background = 'transparent'
+          detailHero.style.border = '0'
+          detailHero.style.boxShadow = 'none'
+        }
+        const detailCard = [...detailOverview.children].find(element => element.classList.contains('detail-card'))
+        if (detailCard) {
+          detailCard.style.marginLeft = '12px'
+          detailCard.style.marginRight = '12px'
+        }
+      }
+      const coldHotCard = [...cloneTarget.children].find(element => element.classList.contains('cold-hot-card'))
+      if (coldHotCard) {
+        coldHotCard.style.marginLeft = '12px'
+        coldHotCard.style.marginRight = '12px'
+      }
+      const qxcHistoryCard = [...cloneTarget.children].find(element => element.classList.contains('qxc-history-card'))
+      if (qxcHistoryCard) {
+        qxcHistoryCard.style.marginLeft = '12px'
+        qxcHistoryCard.style.marginRight = '12px'
+      }
+      cloneTarget.querySelectorAll('.cold-hot-row').forEach(element => {
+        element.style.background = 'transparent'
+        element.style.border = '0'
+        element.style.boxShadow = 'none'
+      })
     }
     if (addCardDividers) {
       const cards = [...cloneTarget.children].filter(element => element.classList.contains('card'))
-      cards.slice(1).forEach(card => {
+      const detailOverview = [...cloneTarget.children].find(element => element.classList.contains('detail-overview'))
+      const detailSupplementaryCards = cards.filter(element => element.classList.contains('cold-hot-card') || element.classList.contains('qxc-history-card'))
+      const dividerTargets = cards.length > 1 ? cards.slice(1) : (detailOverview && detailSupplementaryCards.length ? detailSupplementaryCards : [])
+      dividerTargets.forEach(card => {
         const divider = clonedDocument.createElement('div')
         divider.setAttribute('aria-hidden', 'true')
         divider.style.height = '1px'
@@ -667,13 +1001,28 @@ async function exportTrendElement(id, filename, exportMeta, captureOptions = {})
         card.parentNode.insertBefore(divider, card)
       })
     }
+    clonedContentHeight = Math.max(1, Math.ceil(Math.max(cloneTarget.scrollHeight, cloneTarget.getBoundingClientRect().height)))
   } })
+  const cropHeight = Math.min(captured.height, Math.max(1, Math.ceil(clonedContentHeight * renderScale)))
+  if (cropHeight < captured.height) {
+    const cropped = document.createElement('canvas')
+    cropped.width = captured.width
+    cropped.height = cropHeight
+    cropped.getContext('2d').drawImage(captured, 0, 0, cropped.width, cropped.height, 0, 0, cropped.width, cropped.height)
+    captured = cropped
+  }
+  if (typeof captureOptions.drawOverlay === 'function') captureOptions.drawOverlay(captured,captureWidth,clonedContentHeight)
   const content = withHeader ? appendExportHeader(captured, exportMeta) : captured
   const canvas = await appendExportWatermark(content)
   const link = document.createElement('a')
   link.download = filename
   link.href = canvas.toDataURL('image/png',1)
+  link.style.position = 'fixed'
+  link.style.left = '-9999px'
+  link.style.top = '0'
+  document.body.appendChild(link)
   link.click()
+  window.setTimeout(() => link.remove(), 1000)
 }
 
 const nextLotteryIssue = issue => /^\d+$/.test(issue || '') ? String(Number(issue) + 1).padStart(issue.length,'0') : `${issue || '--'}后`
@@ -756,7 +1105,7 @@ function Kl8DataViews({ history, viewOverride, autoExport = false, onExportCompl
   const rows=useMemo(()=>history.slice(0,period).reverse(),[history,period])
   const metrics=record=>{const numbers=record.redBalls.map(Number).sort((a,b)=>a-b),sum=numbers.reduce((a,b)=>a+b,0),min=numbers[0],max=numbers.at(-1),span=max-min;let runs=0;for(let i=1;i<numbers.length;i++)if(numbers[i]===numbers[i-1]+1&&(i===1||numbers[i-1]!==numbers[i-2]+1))runs++;return{sum,span,max,min,sumTail:sum%10,average:Math.round(sum/numbers.length),sumSpan:sum+span,diffSpan:sum-span,tailSum:numbers.reduce((total,n)=>total+n%10,0),runs,tailGroups:new Set(numbers.map(n=>n%10)).size}}
   const columns=[['sum','和值'],['span','跨度'],['max','最大值'],['min','最小值'],['sumTail','和值尾'],['average','均值'],['sumSpan','和跨和'],['diffSpan','和跨差'],['tailSum','尾数和值'],['runs','连号组数'],['tailGroups','尾数组数']]
-  const download=async()=>{setExporting(true);try{const title=exportTitle || `快乐8${view==='matrix'?'基础矩阵图':'综合数据查阅表'}`;await exportTrendElement('kl8-data-export',exportFilename || `${title}-${period}期.png`,{ title, params:exportParams || `显示：${period}期` });trackAnalytics('export_chart',{page:'trend',game:'kl8',chart:view})}finally{setExporting(false)}}
+  const download=async()=>{setExporting(true);try{const title=exportTitle || `快乐8${view==='matrix'?'基础矩阵图':'综合数据查阅表'}`;await exportTrendElement('kl8-data-export',exportFilename || `${title}-${period}期.png`,{ title, params:exportParams || `显示：${period}期` },{ matrixColumns:view==='matrix' ? 3 : 0 });trackAnalytics('export_chart',{page:'trend',game:'kl8',chart:view})}finally{setExporting(false)}}
   useEffect(() => {
     if (!autoExport) return undefined
     if (!expanded) {
@@ -793,17 +1142,28 @@ function HistoryPage({ item, all, back, onOpen }) {
   const [error, setError] = useState('')
   useEffect(() => {
     let active = true
+    let timer
+    let firstLoad = true
     setHistory(initialHistory)
     setLoading(true)
     setError('')
-    fetchHistory(item.game).then(rows => {
-      if (active) setHistory(rows)
-    }).catch(() => {
-      if (active) setError('完整历史数据暂时不可用，当前显示已加载数据')
-    }).finally(() => {
-      if (active) setLoading(false)
-    })
-    return () => { active = false }
+    const refresh = () => {
+      if (!active || document.hidden) return
+      fetchHistory(item.game).then(rows => {
+        if (active) setHistory(loaded => mergeRecords(rows, loaded))
+      }).catch(() => {
+        if (active && firstLoad) setError('完整历史数据暂时不可用，当前显示已加载数据')
+      }).finally(() => {
+        if (active && firstLoad) { firstLoad = false; setLoading(false) }
+      })
+    }
+    const schedule = () => { timer = setTimeout(() => { refresh(); schedule() }, drawSyncInterval()) }
+    const onFocus = () => refresh()
+    const onVisibility = () => { if (!document.hidden) refresh() }
+    refresh(); schedule()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { active = false; clearTimeout(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisibility) }
   }, [initialHistory, item.game])
   return <main><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>
     <div className="section-head page-title-compact"><div><h1>{item.name}历史开奖</h1><p>按期查看开奖号码</p></div><span className={`game-icon ${item.game}`}>{item.icon}</span></div>
@@ -882,9 +1242,14 @@ function StatusTrendAnalysis({ history, game }) {
   const [fitScreen, setFitScreen] = useState(false)
   const chooseMetric = key => { setMetric(key); setTarget(getStatusOptions(game,key)[0]) }
   const issueOptions = useMemo(() => history.slice(0,period).reverse().map(record => record.issue), [history, period])
+  const rangeTouched = useRef(false)
   const [startIssue, setStartIssue] = useState(() => history.slice(0,30).at(-1)?.issue || '')
   const [endIssue, setEndIssue] = useState(() => history[0]?.issue || '')
-  useEffect(() => { setStartIssue(issueOptions[0] || ''); setEndIssue(issueOptions.at(-1) || '') }, [period, game])
+  useEffect(() => { rangeTouched.current = false; setStartIssue(issueOptions[0] || ''); setEndIssue(issueOptions.at(-1) || '') }, [period, game])
+  useEffect(() => {
+    if (rangeTouched.current || issueOptions.length < 2 || startIssue !== endIssue) return
+    setStartIssue(issueOptions[0]); setEndIssue(issueOptions.at(-1))
+  }, [issueOptions, startIssue, endIssue])
   const rangeHistory = useMemo(() => {
     const chronological = history.slice(0,period).reverse()
     const startIndex = Math.max(0, chronological.findIndex(record => record.issue === startIssue))
@@ -901,7 +1266,7 @@ function StatusTrendAnalysis({ history, game }) {
     {expanded && <div className="kline-content"><div className="kline-controls"><div className="kline-metrics">{metricKeys.map(key => <button className={metric === key ? 'active' : ''} onClick={() => chooseMetric(key)} key={key}>{statusMetrics[key]}</button>)}</div><label className="period-filter"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[20,30,50,100,120].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label></div>
       <div className="status-target-row"><label><span>目标状态</span><select value={target} onChange={event => setTarget(event.target.value)}>{options.map(value => <option value={value} key={value}>{value}</option>)}</select></label><div><span>出现 <b>{hits}</b> 次</span><span>平均遗漏 <b>{averageOmission}</b></span><span>最大遗漏 <b>{maximumOmission}</b></span></div></div>
       <div className="ma-switches">{[['ma5','MA5'],['ma10','MA10'],['ma20','MA20']].map(([key,label]) => <label style={{ '--ma-color':maColors[key] }} key={key}><input type="checkbox" checked={movingAverages[key]} onChange={() => setMovingAverages(current => ({ ...current, [key]:!current[key] }))}/><i/>{label}</label>)}<button type="button" className={fitScreen ? 'active' : ''} aria-pressed={fitScreen} onClick={() => setFitScreen(value => !value)}>{fitScreen ? '已适应屏幕' : '适应屏幕'}</button></div>
-      <div className={`kline-scroll ${fitScreen ? 'fit-screen' : ''}`}><div className="status-trend-canvas" style={{ '--trend-points':data.length }}><React.Suspense fallback={<div className="kline-loading">正在加载图表…</div>}><LazyKlineChart data={data} movingAverages={movingAverages} colors={maColors} metricLabel={statusMetrics[metric]} target={target} averageOmission={averageOmission} maximumOmission={maximumOmission} issueOptions={issueOptions} startIssue={startIssue} endIssue={endIssue} onStartIssueChange={next => { setStartIssue(next); if (issueOptions.indexOf(next) > issueOptions.indexOf(endIssue)) setEndIssue(next) }} onEndIssueChange={next => { setEndIssue(next); if (issueOptions.indexOf(next) < issueOptions.indexOf(startIssue)) setStartIssue(next) }}/></React.Suspense></div></div>
+      <div className={`kline-scroll ${fitScreen ? 'fit-screen' : ''}`}><div className="status-trend-canvas" style={{ '--trend-points':data.length }}><React.Suspense fallback={<div className="kline-loading">正在加载图表…</div>}><LazyKlineChart data={data} movingAverages={movingAverages} colors={maColors} metricLabel={statusMetrics[metric]} target={target} averageOmission={averageOmission} maximumOmission={maximumOmission} issueOptions={issueOptions} startIssue={startIssue} endIssue={endIssue} onStartIssueChange={next => { rangeTouched.current = true; setStartIssue(next); if (issueOptions.indexOf(next) > issueOptions.indexOf(endIssue)) setEndIssue(next) }} onEndIssueChange={next => { rangeTouched.current = true; setEndIssue(next); if (issueOptions.indexOf(next) < issueOptions.indexOf(startIssue)) setStartIssue(next) }}/></React.Suspense></div></div>
       <p className="kline-notice">红柱表示目标状态当期出现并向上 3 个单位，绿柱表示当期未出现并向下 1 个单位；每根柱从上一根柱的终点连续起始。历史统计仅供参考。</p></div>}
   </section>
 }
@@ -915,10 +1280,20 @@ function Trend({ item, all, back, save, onOpen }) {
   const [history, setHistory] = useState(initialHistory)
   useEffect(() => {
     let cancelled = false
+    let timer
     setHistory(initialHistory)
-    fetchHistory(activeGame).then(records => { if (!cancelled) setHistory(records) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [activeGame, initialHistory])
+    const refresh = () => {
+      if (cancelled || document.hidden) return
+      fetchHistory(activeGame).then(records => { if (!cancelled) setHistory(loaded => mergeRecords(records, loaded)) }).catch(() => {})
+    }
+    const schedule = () => { timer = setTimeout(() => { refresh(); schedule() }, drawSyncInterval()) }
+    const onFocus = () => refresh()
+    const onVisibility = () => { if (!document.hidden) refresh() }
+    refresh(); schedule()
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => { cancelled = true; clearTimeout(timer); window.removeEventListener('focus', onFocus); document.removeEventListener('visibilitychange', onVisibility) }
+  }, [activeGame])
   const activeItem = all.find(record => record.game === activeGame) || item
   const frequencyPeriod = ['fc3d', 'pl3'].includes(activeGame) ? 20 : activeGame === 'pl5' ? 10 : 30
   const frequencyHistory = history.slice(0, frequencyPeriod)
@@ -954,7 +1329,6 @@ function Trend({ item, all, back, save, onOpen }) {
     {activeGame === 'ssq' && <SsqHeatTrend history={history}/>}
     {activeGame === 'kl8' && <Kl8DataViews history={history}/>}
     {['fc3d','pl3','pl5'].includes(activeGame) && <StatusTrendAnalysis key={`status-${activeGame}`} history={history} game={activeGame}/>}
-    <HistoryList history={history} onOpen={record => { const target = all.find(row => row.id === record.id) || record; onOpen?.(target) }}/>
     {pickerOpen && <div className={`game-picker-backdrop ${pickerClosing ? 'is-closing' : ''}`} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) closePicker() }}><section className={`game-picker ${pickerClosing ? 'is-closing' : ''}`} role="dialog" aria-modal="true" aria-labelledby="game-picker-title"><header><div><h2 id="game-picker-title">选择彩种</h2><p>切换查看对应的走势数据</p></div><button aria-label="关闭" onClick={closePicker}>×</button></header><div className="game-picker-grid">{gameOrder.map(game => { const record = all.find(row => row.game === game); const meta = games[game]; return <button className={activeGame === game ? 'active' : ''} onClick={() => chooseGame(game)} key={game}><span className={`game-icon ${game}`}>{record?.icon || meta?.icon}</span><b>{record?.name || meta?.name}</b>{activeGame === game && <small>当前</small>}</button> })}</div></section></div>}
   </main>
 }
@@ -971,50 +1345,119 @@ function countColdHotNumbers(records, field, max, { pad = true, unique = false }
   return values.map(value => ({ value:pad ? String(value).padStart(2,'0') : String(value), count:counts.get(value) || 0 }))
 }
 
-function thresholdGroups(entries, hot, warm) {
-  return [['热码',entries.filter(row => hot(row.count))],['温码',entries.filter(row => warm(row.count))],['冷码',entries.filter(row => !hot(row.count) && !warm(row.count))]]
+function thresholdGroups(entries, period, slots) {
+  const numberCount = Math.max(entries.length, 1)
+  const expected = Math.max(0, Number(period) * Number(slots || 1) / numberCount)
+  // 用期数推导当前窗口的平均出现次数，并留出半次或 15% 的波动带：
+  // 高于上沿为热码，落在波动带内为温码，低于下沿为冷码。
+  const tolerance = Math.max(0.5, expected * 0.15)
+  const hotMin = Math.max(1, Math.ceil(expected + tolerance))
+  const warmMin = Math.max(1, Math.ceil(expected - tolerance))
+  return [
+    ['热码', entries.filter(row => row.count >= hotMin)],
+    ['温码', entries.filter(row => row.count >= warmMin && row.count < hotMin)],
+    ['冷码', entries.filter(row => row.count < warmMin)]
+  ]
 }
 
-function rankedGroups(entries, groupCount) {
-  const sorted = [...entries].sort((a,b) => b.count - a.count || Number(a.value) - Number(b.value))
-  if (groupCount === 2) { const split = Math.ceil(sorted.length / 2); return [['热码',sorted.slice(0,split)],['冷码',sorted.slice(split)]] }
-  const first = Math.ceil(sorted.length / 3), second = Math.ceil((sorted.length - first) / 2)
-  return [['热码',sorted.slice(0,first)],['温码',sorted.slice(first,first + second)],['冷码',sorted.slice(first + second)]]
-}
+const COLD_HOT_DEFAULT_PERIODS = { fc3d:7, pl3:7, pl5:10, ssq:11, dlt:11 }
 
 function buildColdHotData(game, history, selectedPeriod) {
   const settings = {
-    fc3d:{ period:7, max:9, pad:false, unique:false, hot:count => count > 2, warm:count => count === 2 },
-    pl3:{ period:7, max:9, pad:false, unique:false, hot:count => count > 2, warm:count => count === 2 },
-    pl5:{ period:10, max:9, pad:false, unique:true, hot:count => count > 4, warm:count => count === 4 },
-    ssq:{ period:11, max:33, pad:true, unique:false, hot:count => count > 2, warm:count => count === 2 },
-    dlt:{ period:Math.min(selectedPeriod,history.length), max:35, pad:true, unique:false }
+    fc3d:{ defaultPeriod:7, max:9, pad:false, unique:false, slots:3 },
+    pl3:{ defaultPeriod:7, max:9, pad:false, unique:false, slots:3 },
+    pl5:{ defaultPeriod:10, max:9, pad:false, unique:true, slots:5 },
+    ssq:{ defaultPeriod:11, max:33, pad:true, unique:false, slots:6 },
+    dlt:{ defaultPeriod:11, max:35, pad:true, unique:false, slots:5, backSlots:2 }
   }
   const config = settings[game]
   if (!config) return null
-  const records = history.slice(0,config.period)
+  const period = Math.max(1, Math.min(Number(selectedPeriod) || config.defaultPeriod, Math.max(history.length, 1)))
+  const records = history.slice(0,period)
   const entries = countColdHotNumbers(records,'redBalls',config.max,{ pad:config.pad, unique:config.unique })
   if (game === 'dlt') {
     const backEntries = countColdHotNumbers(records,'blueBalls',12)
-    return { period:records.length, note:'按出现次数降序排列并平均分区', sections:[{ title:'前区', groups:rankedGroups(entries,3) },{ title:'后区', groups:rankedGroups(backEntries,2) }] }
+    return { period:records.length, note:'根据统计期数和平均出现次数动态分组', sections:[{ title:'前区', groups:thresholdGroups(entries,records.length,config.slots) },{ title:'后区', groups:thresholdGroups(backEntries,records.length,config.backSlots) }] }
   }
-  const sections = [{ title:['ssq'].includes(game) ? '红球' : '', groups:thresholdGroups(entries,config.hot,config.warm) }]
-  if (game === 'ssq') sections.push({ title:'蓝球', groups:thresholdGroups(countColdHotNumbers(records,'blueBalls',16),config.hot,config.warm) })
-  return { period:records.length, note:game === 'pl5' ? '每期相同数字只统计一次' : '按号码实际出现次数统计', sections }
+  const sections = [{ title:['ssq'].includes(game) ? '红球' : '', groups:thresholdGroups(entries,records.length,config.slots) }]
+  if (game === 'ssq') sections.push({ title:'蓝球', groups:thresholdGroups(countColdHotNumbers(records,'blueBalls',16),records.length,1) })
+  return { period:records.length, note:game === 'pl5' ? '每期相同数字只统计一次 · 按统计期数动态分组' : '按统计期数与平均出现次数动态分组', sections }
 }
 
-function ColdHotCard({ game, history }) {
-  const [period,setPeriod] = useState(50)
+function ColdHotCard({ game, history, loading = false }) {
+  const defaultPeriod = COLD_HOT_DEFAULT_PERIODS[game] || 7
+  const [periodInput,setPeriodInput] = useState(String(defaultPeriod))
+  const maxPeriod = Math.max(history.length, 1)
+  const parsedPeriod = Number.parseInt(periodInput, 10)
+  const period = Math.min(maxPeriod, Math.max(1, Number.isFinite(parsedPeriod) && parsedPeriod > 0 ? parsedPeriod : defaultPeriod))
+  useEffect(() => { setPeriodInput(String(defaultPeriod)) }, [defaultPeriod])
   const result = useMemo(() => buildColdHotData(game,history,period), [game,history,period])
   if (!result) return null
-  return <section className="card cold-hot-card"><header><h3>胆码冷热宝</h3>{game === 'dlt' ? <label className="cold-hot-period"><span>期数</span><select value={period} onChange={event => setPeriod(Number(event.target.value))}>{[10,20,30,50].map(value => <option value={value} key={value}>近 {value} 期</option>)}</select></label> : <small>近 {result.period} 期</small>}</header><p>{result.note}</p>{result.sections.map(section => <div className="cold-hot-section" key={section.title || 'numbers'}>{section.title && <h4>{section.title}</h4>}<div className="cold-hot-groups">{section.groups.map(([label,rows],index) => <div className={`cold-hot-row level-${index}`} key={label}><b>{label}</b><div>{rows.map(row => <span title={`${row.value} 出现 ${row.count} 次`} key={row.value}><i className="cold-hot-number">{row.value}</i><small>{row.count}次</small></span>)}</div></div>)}</div></div>)}</section>
+  if (loading) return <section className="card cold-hot-card cold-hot-loading"><header><h3>胆码冷热宝</h3><small>同步中…</small></header><p>正在加载近期开奖数据</p></section>
+  const commitPeriod = value => {
+    const next = Number.parseInt(value, 10)
+    const normalized = Number.isFinite(next) && next > 0 ? Math.min(maxPeriod, next) : Math.min(maxPeriod, defaultPeriod)
+    setPeriodInput(String(Math.max(1, normalized)))
+  }
+  return <section className="card cold-hot-card"><header className="cold-hot-header"><h3>胆码冷热宝</h3><label className="cold-hot-period"><span>期数</span><div className="cold-hot-period-input"><input type="number" inputMode="numeric" min="1" max={maxPeriod} value={periodInput} aria-label="冷热宝期数" onChange={event => setPeriodInput(event.target.value)} onBlur={event => commitPeriod(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') { commitPeriod(event.currentTarget.value); event.currentTarget.blur() } }}/><em>期</em></div></label></header>{result.sections.map(section => <div className="cold-hot-section" key={section.title || 'numbers'}>{section.title && <h4>{section.title}</h4>}<div className="cold-hot-groups">{section.groups.map(([label,rows],index) => <div className={`cold-hot-row level-${index}`} key={label}><b>{label}</b><div>{rows.map(row => <span title={`${row.value} 出现 ${row.count} 次`} key={row.value}><i className="cold-hot-number">{row.value}</i><small>{row.count}次</small></span>)}</div></div>)}</div></div>)}</section>
+}
+
+function formatQxcHistoryDate(value) {
+  const match = String(value || '').match(/^(?:\d{4}-)?(\d{2})-(\d{2})/)
+  return match ? `${match[1]}月${match[2]}日` : '--'
+}
+
+function QxcHistoryStrip({ history, loading = false, canExport = false, exportId = 'qxc-history-export', autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
+  const rows = history.slice(0, 100)
+  const [exporting, setExporting] = useState(false), [exportError, setExportError] = useState('')
+  const exportHistory = useCallback(async () => {
+    if (exporting || loading || !rows.length) return
+    setExporting(true)
+    setExportError('')
+    try {
+      await exportTrendElement(exportId, exportFilename || '七星彩历史开奖长条图-近100期.png', { title: exportTitle || '七星彩历史开奖长条图', params: exportParams || `近${rows.length}期 · 日期、和值与7个位置奖号` }, { fitWidth: true, hideInExport: ['.qxc-history-export-button'] })
+      trackAnalytics('export_chart', { page: 'detail', game: 'qxc', chart: 'history' })
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : '导出失败，请重试')
+      throw error
+    } finally { setExporting(false) }
+  }, [exportId, exportFilename, exportParams, exportTitle, exporting, loading, rows.length])
+  useEffect(() => {
+    if (!autoExport || loading || !rows.length) return undefined
+    let active = true
+    exportHistory().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
+    return () => { active = false }
+  }, [autoExport, loading, rows.length])
+  return <section className="card qxc-history-card" id={exportId} aria-label="七星彩历史开奖长条图">
+    <header className="qxc-history-header"><div><h3>历史开奖长条图</h3></div><div className="qxc-history-actions"><span className="qxc-history-badge">近100期</span>{canExport && <button type="button" className="qxc-history-export-button detail-export-button" disabled={exporting || loading || !rows.length} onClick={() => { exportHistory().catch(() => {}) }}>{exporting ? '生成中…' : '导出历史图'}</button>}</div></header>
+    {exportError && <p className="qxc-history-export-error">导出失败，请重试</p>}
+    {loading && rows.length < 2 ? <div className="qxc-history-loading">正在加载近 100 期历史开奖…</div> : <div className="qxc-history-scroll"><table className="qxc-history-table"><thead><tr><th>期号 / 日期</th><th>和值</th>{Array.from({ length: 7 }, (_, index) => <th key={index}>第{index + 1}位</th>)}</tr></thead><tbody>{rows.map(record => {
+      const values = [...(record.redBalls || []), ...(record.blueBalls || [])].map(value => String(value))
+      const sum = values.reduce((total, value) => total + (Number(value) || 0), 0)
+      return <tr key={record.id}><th><b>{record.issue || '--'}</b><small>{formatQxcHistoryDate(record.drawDate)}</small></th><td className="qxc-history-sum">{sum}</td>{Array.from({ length: 7 }, (_, index) => <td key={`${record.id}-${index}`}><span className={index === 6 ? 'last-position' : ''}>{values[index] ?? '--'}</span></td>)}</tr>
+    })}</tbody></table></div>}
+  </section>
 }
 
 function Detail({ item, all, back, onSwitchGame, onOpen, canExport = false, exportId, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
+  const liveMeta = games[item.game]
+  const liveSource = liveMeta?.liveUrl ? { url: liveMeta.liveUrl, label: liveMeta.liveLabel || '开奖直播' } : null
   const gameHistory = all.filter(r => r.game === item.game)
-  const history = gameHistory.slice(0, 50)
-  const currentIndex = gameHistory.findIndex(record => record.id === item.id || record.issue === item.issue)
-  const previousRecord = currentIndex >= 0 ? gameHistory[currentIndex + 1] : undefined
+  const historyLimit = item.game === 'qxc' ? 100 : 50
+  const initialHistory = gameHistory.slice(0, historyLimit)
+  const [history, setHistory] = useState(initialHistory)
+  const [historyLoading, setHistoryLoading] = useState(initialHistory.length < 2)
+  useEffect(() => {
+    let active = true
+    setHistory(initialHistory)
+    setHistoryLoading(true)
+    fetchHistory(item.game).then(records => {
+      if (active) setHistory(mergeRecords(records, initialHistory).slice(0, historyLimit))
+    }).catch(() => {}).finally(() => { if (active) setHistoryLoading(false) })
+    return () => { active = false }
+  }, [item.game, item.issue, historyLimit])
+  const currentIndex = history.findIndex(record => record.id === item.id || record.issue === item.issue)
+  const previousRecord = currentIndex >= 0 ? history[currentIndex + 1] : undefined
   const nextGame = gameOrder[(gameOrder.indexOf(item.game) + 1) % gameOrder.length]
   const nextRecord = all.find(record => record.game === nextGame)
   const [exporting, setExporting] = useState(false)
@@ -1023,21 +1466,24 @@ function Detail({ item, all, back, onSwitchGame, onOpen, canExport = false, expo
     if (exporting) return
     setExporting(true)
     try {
-      await exportTrendElement(exportTargetId, exportFilename || `${item.name}-详情-${item.issue}.png`, { title: exportTitle || `${item.name}详情`, params: exportParams || `第 ${item.issue} 期 · ${item.drawDate}` }, { fitWidth: true, withHeader: false, addCardDividers: true })
+      await exportTrendElement(exportTargetId, exportFilename || `${item.name}-详情-${item.issue}.png`, { title: exportTitle || `${item.name}详情`, params: exportParams || `第 ${item.issue} 期 · ${item.drawDate}` }, { fitWidth: true, withHeader: false, addCardDividers: true, hideInExport: ['.comprehensive-export-actions','.comprehensive-data-export-error'] })
       trackAnalytics('export_chart', { page: 'detail', game: item.game, chart: 'detail' })
     } finally { setExporting(false) }
   }
   useEffect(() => {
-    if (!autoExport) return undefined
+    if (!autoExport || historyLoading) return undefined
     let active = true
     downloadDetail().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
     return () => { active = false }
-  }, [autoExport])
-  return <main><div className="detail-toolbar"><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button>{canExport && <button type="button" className="detail-export-button" disabled={exporting} onClick={downloadDetail}><Download size={15}/>{exporting ? '生成中…' : '导出图片'}</button>}</div><div className="detail-export-content" id={exportTargetId}><div className="detail-hero"><button type="button" className={`game-icon ${item.game} detail-game-switch`} title="点击切换彩种" aria-label="点击切换彩种" onClick={() => nextRecord && onSwitchGame?.(nextRecord, all)}>{item.icon}</button><p>第 {item.issue} 期 · {item.drawDate}</p><Balls groups={[{ values: item.redBalls }, { values: item.blueBalls, accent: true }]}/></div>
+  }, [autoExport, historyLoading])
+  return <main><div className="detail-toolbar"><button className="back" onClick={back}><ArrowLeft size={18}/> 返回</button><div className="detail-toolbar-actions">{liveSource && <div className="detail-live-cluster"><div className="detail-live-schedule"><span>直播日期 <b>{item.drawDate || '--'}</b></span><span>直播时间 <b>{liveMeta.time || '--'}</b></span></div><a className="detail-live-button" href={liveSource.url} target="_blank" rel="noopener noreferrer" title={`打开${liveSource.label}`}><Radio size={15}/>{liveSource.label}</a></div>}{canExport && <button type="button" className="detail-export-button" disabled={exporting} onClick={downloadDetail}><Download size={15}/>{exporting ? '生成中…' : '导出图片'}</button>}</div></div><div className="detail-export-content" id={exportTargetId}><div className="detail-overview"><div className="detail-hero"><button type="button" className={`game-icon ${item.game} detail-game-switch`} title="点击切换彩种" aria-label="点击切换彩种" onClick={() => nextRecord && onSwitchGame?.(nextRecord, all)}>{item.icon}</button><p>第 {item.issue} 期 · {item.drawDate}</p><Balls groups={[{ values: item.redBalls }, { values: item.blueBalls, accent: true }]}/></div>
     <section className="card detail-card"><h3>本期数据</h3><div className="detail-grid"><span>本期销量<b>{item.saleAmountText}</b></span><span>奖池累计<b>{item.poolAmountText}</b></span><span>一等奖<b>{item.firstPrizeText}</b></span></div></section>
-    <DrawMetrics game={item.game} record={item} previousRecord={previousRecord}/>
-    <ColdHotCard game={item.game} history={history}/></div>
-    <HistoryList history={history} onOpen={onOpen}/></main>
+    <DrawMetrics game={item.game} record={item} previousRecord={previousRecord}/></div>
+    <TodayObservation game={item.game} history={history} loading={historyLoading}/>
+    {item.game !== 'qxc' && <ColdHotCard game={item.game} history={history} loading={historyLoading}/>}
+    <ComprehensiveData game={item.game} history={history} loading={historyLoading} canExport={false} exportId={`${exportTargetId}-comprehensive`}/></div>
+    {item.game === 'qxc' && <QxcHistoryStrip history={history} loading={historyLoading} canExport={canExport} exportId={`${exportTargetId}-history`}/>}
+    </main>
 }
 
 function RandomPage({ save }) {
@@ -1097,6 +1543,16 @@ function Plans({ plans, remove }) {
 
 const memberStorageKey = 'caishutong-email-member'
 const memberSessionDays = 30
+const guestSessionDays = 30
+const createGuestMember = () => ({
+  email: 'guest@local.caishutong',
+  nickname: '游客',
+  isGuest: true,
+  isAdmin: false,
+  canExport: false,
+  loggedAt: new Date().toISOString(),
+  expiresAt: Date.now() + guestSessionDays * 24 * 60 * 60 * 1000
+})
 const readStoredMember = () => {
   try {
     const value = JSON.parse(localStorage.getItem(memberStorageKey))
@@ -1104,7 +1560,13 @@ const readStoredMember = () => {
     return value
   } catch { return null }
 }
-const maskEmail = email => { const [name,domain=''] = String(email || '').split('@'); return `${name.slice(0,2)}${name.length > 2 ? '***' : '*'}@${domain}` }
+const maskEmail = (email, isGuest = false) => isGuest ? '仅限首页与选号工具' : (() => { const [name,domain=''] = String(email || '').split('@'); return `${name.slice(0,2)}${name.length > 2 ? '***' : '*'}@${domain}` })()
+const readApiJson = async response => {
+  const raw = await response.text()
+  try { return raw ? JSON.parse(raw) : {} } catch {
+    return { error: response.status === 502 ? '邮件服务配置异常，请联系管理员' : response.ok ? '服务响应格式错误，请稍后重试' : '服务暂时不可用，请稍后重试' }
+  }
+}
 
 function EmailLogin({ notify, onLogin }) {
   const [email,setEmail] = useState(''), [code,setCode] = useState(''), [seconds,setSeconds] = useState(0), [error,setError] = useState(''), [sending,setSending] = useState(false), [verifying,setVerifying] = useState(false), [codeSent,setCodeSent] = useState(false)
@@ -1120,7 +1582,7 @@ function EmailLogin({ notify, onLogin }) {
     setSending(true); setError('')
     try {
       const response = await fetch('/api/auth/email/send-code',{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({ email:normalizedEmail }) })
-      const body = await response.json()
+      const body = await readApiJson(response)
       if (!response.ok) throw new Error(body.error || '验证码发送失败')
       setCodeSent(true); setSeconds(60); notify('验证码已发送，请检查邮箱')
     } catch (reason) { setError(reason.message) } finally { setSending(false) }
@@ -1133,12 +1595,20 @@ function EmailLogin({ notify, onLogin }) {
     setVerifying(true); setError('')
     try {
       const response = await fetch('/api/auth/email/verify-code',{ method:'POST',headers:{ 'Content-Type':'application/json' },body:JSON.stringify({ email:normalizedEmail,code }) })
-      const body = await response.json()
+      const body = await readApiJson(response)
       if (!response.ok) throw new Error(body.error || '验证码验证失败')
       onLogin(body.member)
     } catch (reason) { setError(reason.message) } finally { setVerifying(false) }
   }
   return <section className="profile-login-card"><div className="login-mark"><Mail size={29}/></div><h2>邮箱验证码登录</h2><p>使用邮箱验证码登录，用于管理我的方案和会员权益</p><form onSubmit={submit}><label><span>邮箱地址</span><input type="email" inputMode="email" autoComplete="email" maxLength="120" placeholder="请输入邮箱地址" value={email} onChange={event => { setEmail(event.target.value); setCodeSent(false); setError('') }}/></label><label><span>验证码</span><div className="code-field"><input inputMode="numeric" autoComplete="one-time-code" maxLength="6" placeholder="请输入6位验证码" value={code} onChange={event => { setCode(event.target.value.replace(/\D/g,'').slice(0,6)); setError('') }}/><button type="button" disabled={seconds > 0 || sending} onClick={sendCode}>{sending ? '发送中…' : seconds > 0 ? `${seconds}秒后重发` : '获取验证码'}</button></div></label>{error && <p className="login-error">{error}</p>}<button className="login-submit" type="submit" disabled={verifying}>{verifying ? '正在验证…' : '验证并登录'}</button></form><small>验证码将发送至你的邮箱，10分钟内有效 · 登录即代表同意《用户协议》和《隐私政策》</small></section>
+}
+
+function GuestLoginButton({ onGuestLogin }) {
+  return <button type="button" className="guest-login-button" onClick={onGuestLogin}><UserRound size={17}/>游客登录<span>仅使用首页和选号工具</span></button>
+}
+
+function LoginRequired({ notify, onLogin, onGuestLogin, guestBlocked = false }) {
+  return <main className="auth-required-page"><div className="auth-required-intro"><h1>{guestBlocked ? '游客模式暂不支持此页面' : '登录后查看全部内容'}</h1><p>{guestBlocked ? '游客仅可使用首页和选号工具；使用邮箱登录后可查看完整内容。' : '登录后即可查看开奖数据、历史开奖、走势图、详情和选号工具。'}</p></div><EmailLogin notify={notify} onLogin={onLogin}/>{!guestBlocked && <GuestLoginButton onGuestLogin={onGuestLogin}/>}</main>
 }
 
 function HelpPage({ back, notify }) {
@@ -1185,8 +1655,9 @@ function SecurityPage({ member, back, onLogout, onDeleteData, notify, planCount 
   </main>
 }
 
-function ProfilePage({ member, onLogin, onLogout, notify, goPlans, openHelp, openAbout, openSecurity }) {
-  if (!member) return <main className="profile-page"><EmailLogin notify={notify} onLogin={onLogin}/><section className="profile-menu public-profile-menu"><button onClick={openHelp}><i style={{backgroundColor:'#f3aa19'}}><HelpCircle size={19}/></i><span><b>帮助与反馈</b><small>使用帮助与意见反馈</small></span><ChevronRight size={19}/></button><button onClick={openAbout}><i style={{backgroundColor:'#49a9ee'}}><Info size={19}/></i><span><b>关于彩研通</b><small>版本信息与服务协议</small></span><ChevronRight size={19}/></button></section><p className="profile-disclaimer">邮箱仅用于账户验证和服务通知</p></main>
+function ProfilePage({ member, onLogin, onLogout, notify, onGuestLogin, goPlans, openHelp, openAbout, openSecurity }) {
+  if (!member) return <main className="profile-page"><EmailLogin notify={notify} onLogin={onLogin}/><GuestLoginButton onGuestLogin={onGuestLogin}/><section className="profile-menu public-profile-menu"><button onClick={openHelp}><i style={{backgroundColor:'#f3aa19'}}><HelpCircle size={19}/></i><span><b>帮助与反馈</b><small>使用帮助与意见反馈</small></span><ChevronRight size={19}/></button><button onClick={openAbout}><i style={{backgroundColor:'#49a9ee'}}><Info size={19}/></i><span><b>关于彩研通</b><small>版本信息与服务协议</small></span><ChevronRight size={19}/></button></section><p className="profile-disclaimer">邮箱仅用于账户验证和服务通知</p></main>
+  if (member.isGuest) return <main className="profile-page"><section className="profile-user guest-profile-user"><div className="profile-avatar"><UserRound size={31}/></div><div><h2>游客模式</h2><p>{maskEmail(member.email, true)}</p></div><span>受限访问</span></section><section className="guest-access-card"><UserRound size={24}/><div><b>当前为游客登录</b><p>可使用首页开奖信息和选号工具，详情、走势、历史及方案保存需邮箱登录。</p></div></section><button className="logout-button" onClick={onLogout}><LogOut size={18}/> 退出游客模式</button><p className="profile-disclaimer">退出后可使用邮箱验证码登录完整功能</p></main>
   const items = [
     [Bookmark,'我的方案','查看已保存的选号方案','#4169f6',goPlans],
     [Download,'数据导出','会员可导出历史分析数据','#20b7d8'],
@@ -1200,7 +1671,7 @@ function ProfilePage({ member, onLogin, onLogout, notify, goPlans, openHelp, ope
 
 const adminLabels = {
   home:'首页', random:'选号工具', plans:'我的方案', profile:'我的', detail:'详情页', trend:'走势图', history:'历史开奖', rules:'玩法规则',
-  nav_click:'底部导航', open_detail:'打开详情', open_trend:'打开走势图', open_history:'打开历史开奖', open_rules:'打开玩法规则', random_generate:'随机生成', save_plan:'保存方案', member_login:'用户登录', export_chart:'导出走势图',
+  nav_click:'底部导航', open_detail:'打开详情', open_trend:'打开走势图', open_history:'打开历史开奖', open_rules:'打开玩法规则', random_generate:'随机生成', save_plan:'保存方案', member_login:'用户登录', guest_login:'游客登录', export_chart:'导出走势图',
   fc3d:'福彩3D', ssq:'双色球', dlt:'大乐透', pl3:'排列三', pl5:'排列五', qxc:'七星彩', qlc:'七乐彩', klb:'快乐8', mobile:'手机端', desktop:'电脑端'
 }
 const adminName = value => adminLabels[value] || value || '其他'
@@ -1266,24 +1737,33 @@ function App() {
   const persist = next => { setPlans(next); localStorage.setItem(storageKey, JSON.stringify(next)) }
   const notify = message => { setToast(message); setTimeout(() => setToast(''),2200) }
   const save = plan => {
-    if (!member) {
-      setView(null); setViewStack([]); setTab('profile'); scrollTo(0,0)
-      notify('请先登录后保存方案')
+    if (!member || member.isGuest) {
+      if (!member) { setView(null); setViewStack([]); setTab('profile'); scrollTo(0,0) }
+      notify(member?.isGuest ? '游客可以选号，但登录邮箱后才能保存方案' : '请先登录后保存方案')
       return false
     }
     persist([plan,...plans].slice(0,20)); trackAnalytics('save_plan',{page:tab,game:rules.find(rule => plan.planName.startsWith(rule.name))?.key}); notify('已保存在“我的方案”'); return true
   }
-  const login = next => { const canExport = next?.email?.toLowerCase() === '1226779246@qq.com'; const loggedIn={...next,canExport,isAdmin:canExport,loggedAt:new Date().toISOString(),expiresAt:Date.now()+memberSessionDays*24*60*60*1000}; setMember(loggedIn); localStorage.setItem(memberStorageKey, JSON.stringify(loggedIn)); trackAnalytics('member_login',{page:'profile'}); notify('登录成功，30天内免登录') }
+  const login = next => { const canExport = next?.email?.toLowerCase() === '1226779246@qq.com'; const loggedIn={...next,isGuest:false,canExport,isAdmin:canExport,loggedAt:new Date().toISOString(),expiresAt:Date.now()+memberSessionDays*24*60*60*1000}; setMember(loggedIn); localStorage.setItem(memberStorageKey, JSON.stringify(loggedIn)); trackAnalytics('member_login',{page:'profile'}); notify('登录成功，30天内免登录') }
+  const guestLogin = () => { const loggedIn = createGuestMember(); setMember(loggedIn); localStorage.setItem(memberStorageKey, JSON.stringify(loggedIn)); trackAnalytics('guest_login',{page:'auth'}); notify('游客登录成功，可使用首页和选号工具') }
   const logout = () => { setMember(null); localStorage.removeItem(memberStorageKey); notify('已退出登录') }
   const deleteLocalAccountData = () => { setMember(null); setPlans([]); [memberStorageKey,storageKey,analyticsVisitorKey,'caishutong-feedback'].forEach(key=>localStorage.removeItem(key)); sessionStorage.removeItem(analyticsSessionKey); setView(null); setViewStack([]); setTab('profile'); notify('本设备账户数据已删除') }
-  const nav = k => { trackAnalytics('nav_click',{page:k}); setTab(k); setView(null); setViewStack([]); scrollTo(0,0) }
-  const showView = next => { trackAnalytics(`open_${next.type}`,{page:next.type,game:next.item?.game}); setViewStack(stack => [...stack,{ tab, view }]); setView(next); scrollTo(0,0) }
+  const guestLockedMessage = '游客仅可使用首页和选号工具，请使用邮箱登录后继续'
+  const nav = k => {
+    if (member?.isGuest && !['home','random','profile'].includes(k)) return notify(guestLockedMessage)
+    trackAnalytics('nav_click',{page:k}); setTab(k); setView(null); setViewStack([]); scrollTo(0,0)
+  }
+  const showView = next => {
+    if (member?.isGuest) return notify(guestLockedMessage)
+    trackAnalytics(`open_${next.type}`,{page:next.type,game:next.item?.game}); setViewStack(stack => [...stack,{ tab, view }]); setView(next); scrollTo(0,0)
+  }
   const replaceView = next => { trackAnalytics(`open_${next.type}`,{page:next.type,game:next.item?.game}); setView(next); scrollTo(0,0) }
   const goBack = () => { const previous = viewStack.at(-1); if (previous) { setTab(previous.tab); setView(previous.view); setViewStack(viewStack.slice(0,-1)) } else { setView(null); setViewStack([]) } scrollTo(0,0) }
   const navItems = [['home',Home,'首页'],['random',Dices,'选号工具'],['plans',Bookmark,'我的方案'],['profile',UserRound,'我的']]
   const activeNavIndex = Math.max(0, navItems.findIndex(([key]) => key === tab))
   const keepTabActive = !view || ['help','about','security'].includes(view.type)
   const pageTransitionKey = view ? `${view.type}:${view.item?.id || view.item?.issue || ''}` : `tab:${tab}`
+  const requiresMember = (!member && (Boolean(view) || tab !== 'profile')) || (member?.isGuest && Boolean(view))
   useEffect(() => { trackAnalytics('page_view',{ page:view?.type || tab, game:view?.item?.game }) },[tab,view?.type,view?.item?.game])
   useEffect(() => {
     const active = Boolean(view || tab !== 'home' || viewStack.length)
@@ -1326,7 +1806,7 @@ function App() {
     window.addEventListener('touchcancel',onEnd,{ passive:true })
     return () => { window.removeEventListener('touchstart',onStart); window.removeEventListener('touchmove',onMove); window.removeEventListener('touchend',onEnd); window.removeEventListener('touchcancel',onEnd); indicator.remove() }
   },[])
-  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content"><div className="page-transition" key={pageTransitionKey}>{view?.type === 'detail' ? <Detail {...view} canExport={Boolean(member?.canExport)} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={(record,history) => showView({type:'detail',item:record,all:history})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage canExport={Boolean(member?.canExport)} open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div></div>
+  return <div className={"app-shell " + (member && member.canExport ? "export-enabled" : "")}><div className="brand"><img src="/caiyan-logo.png" alt="彩研通"/><b>彩研通</b><small>数字生活助手</small></div><div className="content"><div className="page-transition" key={pageTransitionKey}>{requiresMember ? <LoginRequired guestBlocked={Boolean(member?.isGuest)} notify={notify} onLogin={login} onGuestLogin={guestLogin}/> : view?.type === 'detail' ? <Detail {...view} canExport={Boolean(member?.canExport)} back={goBack} onSwitchGame={(item,all) => replaceView({type:"detail",item,all})} onOpen={record => showView({type:"detail",item:record,all:view.all})}/> : view?.type === 'trend' ? <Trend {...view} save={save} back={goBack} onOpen={record => showView({type:'detail',item:record,all:view.all})}/> : view?.type === 'history' ? <HistoryPage {...view} back={goBack} onOpen={(record,history) => showView({type:'detail',item:record,all:history})}/> : view?.type === 'rules' ? <RulesPage {...view} back={goBack}/> : view?.type === 'help' ? <HelpPage back={goBack} notify={notify}/> : view?.type === 'about' ? <AboutPage back={goBack}/> : view?.type === 'security' ? <SecurityPage member={member} planCount={plans.length} back={goBack} onLogout={()=>{logout();setView(null);setViewStack([])}} onDeleteData={deleteLocalAccountData} notify={notify}/> : tab === 'home' ? <HomePage canExport={Boolean(member?.canExport)} open={(item,all) => showView({type:'detail',item,all})} openTrend={(item,all) => showView({type:'trend',item,all})} openHistory={(item,all) => showView({type:'history',item,all})} openRules={(item,all) => showView({type:'rules',item,all})}/> : tab === 'random' ? <RandomPage save={save}/> : tab === 'plans' ? <Plans plans={plans} remove={id => persist(plans.filter(p => p.id !== id))}/> : <ProfilePage member={member} onLogin={login} onLogout={logout} notify={notify} onGuestLogin={guestLogin} goPlans={() => nav('plans')} openHelp={() => showView({type:'help'})} openAbout={() => showView({type:'about'})} openSecurity={() => showView({type:'security'})}/>}</div></div>
     <nav className="bottom-nav" aria-label="主导航" style={{'--nav-index':activeNavIndex}}><i className="nav-selection" aria-hidden="true"/>{navItems.map(([k,Icon,label]) => <button className={tab===k&&keepTabActive?'active':''} aria-current={tab===k&&keepTabActive?'page':undefined} onClick={() => nav(k)} key={k}><Icon/><span>{label}</span></button>)}</nav>{toast && <div className="toast">{toast}</div>}</div>
 }
 createRoot(document.getElementById('root')).render(location.pathname.startsWith('/admin') ? <AdminDashboard/> : <App/>)
