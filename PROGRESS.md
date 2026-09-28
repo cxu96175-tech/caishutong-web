@@ -593,7 +593,7 @@
 - 目标：奖号字号复用期号按表格容器宽度自适应的规则，形态标签保持单行显示。
 - 完成内容：奖号数据单元字号改为基于容器宽度流动缩放；形态标签禁止内部换行。
 - 相关文件：`src/styles.css`、`PROGRESS.md`。
-- 验证结果：`npm run build`、`git diff --check` 通过；与阶段64一并发布于 Pages 部署 `https://b50244b5.caishutong-web.pages.dev`（提交 `c241cd4`），主站加载 `assets/index-D6vxekBC.js`、`assets/index-TWEF7Uan.css`。
+- 验证结果：`npm run build`、`git diff --check` 通过；与阶段64一并发布，应用提交 `c241cd4` 的 Pages 部署为 `https://b50244b5.caishutong-web.pages.dev`；主站已加载 `assets/index-C785-AIf.js`、`assets/index-5tfeCyIM.css`。
 - 状态：已发布，待用户验收。
 
 ### 阶段 64 — 综合数据单行与横向滚动
@@ -601,7 +601,7 @@
 - 目标：表格列按单元格内容自然定宽，所有标签与文案不换行；窄屏可以横向滑动查看。
 - 完成内容：综合数据表切换为自动列布局并按 max-content 展开，移除固定百分比列宽；外层容器开启横向滚动；表头、单元格统一单行显示。
 - 相关文件：`src/main.jsx`、`src/styles.css`、`PROGRESS.md`。
-- 验证结果：`npm run build`、`git diff --check` 通过；Pages 部署 `https://b50244b5.caishutong-web.pages.dev` 对应提交 `c241cd4`，部署状态 Active；主站加载 `assets/index-D6vxekBC.js`、`assets/index-TWEF7Uan.css` 并返回 HTTP 200。
+- 验证结果：`npm run build`、`git diff --check` 通过；应用提交 `c241cd4` 的 Pages 部署 `https://b50244b5.caishutong-web.pages.dev` 状态 Active；主站加载 `assets/index-C785-AIf.js`、`assets/index-5tfeCyIM.css` 并返回 HTTP 200。
 - 状态：已发布，待用户验收。
 
 ### 阶段 55 — 综合数据窄屏展示细化（进行中）
