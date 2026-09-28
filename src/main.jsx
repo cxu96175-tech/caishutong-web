@@ -587,7 +587,9 @@ function ComprehensiveData({ game, history, loading = false, canExport = false, 
     return values.filter(value => value <= Math.max(history.length, 20)).sort((a, b) => a - b)
   }, [history.length])
   const activePeriod = Math.min(period, Math.max(history.length, 20))
-  const columnWeights = { issue:1, draw:.9, shape:.85, sum:.78, span:.78, oddEven:1, bigSmall:1, route:1 }
+  const maxDrawTextLength = rows.reduce((maxLength, row) => Math.max(maxLength, row.draw?.length || 0), 0)
+  const drawColumnWeight = Math.max(1.2, Math.min(3.5, 0.6 + maxDrawTextLength / 8))
+  const columnWeights = { issue:1.15, draw:drawColumnWeight, shape:.95, sum:.82, span:.82, oddEven:1, bigSmall:1, route:1 }
   const totalColumnWeight = columns.reduce((total, column) => total + (columnWeights[column.key] || 1), 0)
   const exportImage = useCallback(async () => {
     if (exporting || loading || !rows.length) return

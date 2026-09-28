@@ -4,13 +4,13 @@
 
 ## 当前快照
 
-- 更新时间：2026-09-27
+- 更新时间：2026-09-29
 - 当前分支：以 `git branch --show-current` 为准
-- 基线提交：`d71653b Record derived trend production release`
-- 工作区状态：Pages 发布提交已推送；另有未跟踪的 `lottery-official-data-test` Worker 草稿，未发布。
+- 基线提交：`a5e4c5a Record integrated production release`
+- 工作区状态：阶段 59 综合数据表样式调整尚未提交；另有未跟踪的 `lottery-official-data-test` Worker 草稿，未发布。
 - 当前版本：`package.json` 中为 `1.2.1`
-- 当前阶段：阶段 58 — 走势图默认30期与筛选器优化
-- 阶段状态：已发布，待用户验收
+- 当前阶段：阶段 59 — 综合数据表格字号与奖号列自适应
+- 阶段状态：本地修改，构建通过，待验收；未发布
 
 ## 项目范围
 
@@ -555,6 +555,14 @@
 - 验证结果：`npm run build`、`git diff --check` 通过；`https://888888c.xyz/?nav=1` 与生产部署地址均返回 HTTP 200，并加载 `assets/index-CtU4mbAu.js`、`assets/index-D9fMaHGv.css`。
 - 正式部署：Pages `main` 分支，`https://184d7720.caishutong-web.pages.dev`（2026-09-26）。
 - 状态：已发布，待用户验收。
+
+### 阶段 59 — 综合数据表格字号与奖号列自适应（待验收）
+
+- 目标：综合数据表按截图反馈放大字号、形态字号单独放大、奖号列按号码文本长度适配，并保留淡化后的列底色与清晰网格。
+- 完成内容：奖号列宽根据当前彩种展示期内的奖号文本长度动态分配；综合数据表桌面正文/表头字号分别调整为 13px/12px，手机调整为 11px/10px，形态标签额外增大；保留列颜色并减淡底色与网格线，维持走势图式轻网格观感。
+- 相关文件：`src/main.jsx`、`src/styles.css`、`PROGRESS.md`。
+- 验证结果：`npm run build`、`git diff --check` 通过；受保护的详情页尚未进行浏览器视觉复核。
+- 状态：本地修改，待用户验收；尚未发布。
 
 ### 阶段 55 — 综合数据窄屏展示细化（进行中）
 
