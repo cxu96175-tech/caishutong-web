@@ -585,10 +585,6 @@ function ComprehensiveData({ game, history, loading = false, canExport = false, 
     return values.filter(value => value <= Math.max(history.length, 20)).sort((a, b) => a - b)
   }, [history.length])
   const activePeriod = Math.min(period, Math.max(history.length, 20))
-  const maxDrawTextLength = rows.reduce((maxLength, row) => Math.max(maxLength, row.draw?.length || 0), 0)
-  const drawColumnWeight = Math.max(1.2, Math.min(3.5, 0.6 + maxDrawTextLength / 8))
-  const columnWeights = { issue:1.15, draw:drawColumnWeight, shape:.95, sum:.82, span:.82, oddEven:1, bigSmall:1, route:1 }
-  const totalColumnWeight = columns.reduce((total, column) => total + (columnWeights[column.key] || 1), 0)
   const exportImage = useCallback(async () => {
     if (exporting || loading || !rows.length) return
     setExporting(true); setExportError('')
@@ -610,7 +606,7 @@ function ComprehensiveData({ game, history, loading = false, canExport = false, 
   return <section className="card comprehensive-data-card" id={exportId} aria-label="综合数据">
     <header className="comprehensive-data-header"><div><h3>综合数据</h3></div><div className="comprehensive-export-actions"><label><select value={activePeriod} onChange={event => setPeriod(Number(event.target.value))} aria-label="综合数据期数">{periodOptions.map(value => <option value={value} key={value}>近{value}期</option>)}</select></label>{canExport && <button type="button" className="detail-export-button comprehensive-export-button" disabled={exporting || loading || !rows.length} onClick={() => { exportImage().catch(() => {}) }}><Download size={14}/>{exporting ? '生成中…' : '导出综合图'}</button>}</div></header>
     {exportError && <p className="comprehensive-data-export-error">综合数据导出失败，请重试</p>}
-    {!rows.length ? <div className="comprehensive-data-empty">暂无可用的历史开奖数据</div> : <div className="comprehensive-data-scroll"><table className="comprehensive-data-table"><colgroup>{columns.map(column => <col key={column.key} style={{ width:`${(columnWeights[column.key] || 1) / totalColumnWeight * 100}%` }}/>)}</colgroup><thead><tr>{columns.map(column => <th className={`comprehensive-col-${column.className}`} key={column.key}>{column.label}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={row.issue}>{columns.map(column => <td className={`comprehensive-col-${column.className}`} key={column.key}><span className={column.key === 'draw' ? 'comprehensive-number' : column.key === 'shape' ? `comprehensive-shape ${comprehensiveShapeClass(row.shape)}` : ''}>{row[column.key] ?? '--'}</span></td>)}</tr>)}</tbody></table></div>}
+    {!rows.length ? <div className="comprehensive-data-empty">暂无可用的历史开奖数据</div> : <div className="comprehensive-data-scroll"><table className="comprehensive-data-table"><thead><tr>{columns.map(column => <th className={`comprehensive-col-${column.className}`} key={column.key}>{column.label}</th>)}</tr></thead><tbody>{rows.map(row => <tr key={row.issue}>{columns.map(column => <td className={`comprehensive-col-${column.className}`} key={column.key}><span className={column.key === 'draw' ? 'comprehensive-number' : column.key === 'shape' ? `comprehensive-shape ${comprehensiveShapeClass(row.shape)}` : ''}>{row[column.key] ?? '--'}</span></td>)}</tr>)}</tbody></table></div>}
   </section>
 }
 

@@ -798,14 +798,15 @@
 .comprehensive-data-header{display:flex;justify-content:space-between;gap:10px}
 .comprehensive-export-actions{display:flex;align-items:center;gap:8px}
 .comprehensive-export-button{height:30px;padding:0 9px;font-size:10px}
-.comprehensive-data-scroll{container-type:inline-size;overflow:hidden;border:1px solid #e8ecf2;border-radius:10px;background:#fff}
-.comprehensive-data-table{width:100%;min-width:0;table-layout:fixed;border-collapse:collapse;border-spacing:0;font-variant-numeric:tabular-nums}
-.comprehensive-data-table th,.comprehensive-data-table td{width:auto;height:38px;padding:0 3px;border-right:1px solid #e9edf2;border-bottom:1px solid #e9edf2;text-align:center;white-space:normal;overflow-wrap:anywhere;line-height:1.2}
+.comprehensive-data-scroll{container-type:inline-size;overflow-x:auto;overflow-y:hidden;border:1px solid #e8ecf2;border-radius:10px;background:#fff;scrollbar-width:thin}
+.comprehensive-data-table{width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;border-spacing:0;font-variant-numeric:tabular-nums}
+.comprehensive-data-table th,.comprehensive-data-table td{height:38px;padding:0 6px;border-right:1px solid #e9edf2;border-bottom:1px solid #e9edf2;text-align:center;white-space:nowrap;overflow-wrap:normal;line-height:1.2}
 .comprehensive-data-table th:last-child,.comprehensive-data-table td:last-child{border-right:0}
 .comprehensive-data-table thead th{height:38px;background:#f3f4f6!important;color:#6e7785;font-size:12px;font-weight:400!important}
 .comprehensive-data-table tbody tr:last-child td{border-bottom:0}
 .comprehensive-data-table tbody td{font-weight:400!important}
 .comprehensive-data-table tbody td.comprehensive-col-issue{font-size:clamp(7px,2.2cqi,13px);white-space:nowrap;overflow-wrap:normal}
+.comprehensive-data-table tbody td.comprehensive-col-draw{font-size:clamp(7px,2.2cqi,13px)}
 .comprehensive-data-table .comprehensive-col-issue{background:#fafbfc;color:#858c98;font-weight:700}
 .comprehensive-data-table .comprehensive-col-draw{background:#f6fafc;color:#30353e;font-weight:800}
 .comprehensive-data-table .comprehensive-col-shape{background:#fbfbfc}
@@ -817,7 +818,7 @@
 .comprehensive-data-table tbody td{font-size:13px}
 .comprehensive-data-table .comprehensive-col-draw{font-size:13px}
 .comprehensive-data-table .comprehensive-number{letter-spacing:.03em}
-.comprehensive-shape{padding-left:24px;padding-right:24px;font-size:15px;font-weight:400!important;line-height:1.15}
+.comprehensive-shape{padding-left:24px;padding-right:24px;font-size:15px;font-weight:400!important;line-height:1.15;white-space:nowrap}
 .comprehensive-data-empty,.comprehensive-data-loading>div{border:0;border-radius:0}
 .comprehensive-data-export-error{margin:0 0 8px;color:#d94c5b;font-size:10px}
 
