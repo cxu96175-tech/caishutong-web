@@ -547,10 +547,8 @@ function comprehensiveNumberLabel(record, game) {
 }
 
 function getComprehensiveColumns(game) {
-  const columns = [
-    { key: 'issue', label: '期号', className: 'issue' },
-    { key: 'draw', label: '奖号', className: 'draw' }
-  ]
+  const columns = [{ key: 'issue', label: '期号', className: 'issue' }]
+  if (game !== 'kl8') columns.push({ key: 'draw', label: '奖号', className: 'draw' })
   if (comprehensiveShapeGames.has(game)) columns.push({ key: 'shape', label: '形态', className: 'shape' })
   columns.push(
     { key: 'sum', label: game === 'dlt' || game === 'ssq' ? '前区和值' : '和值', className: 'sum' },
