@@ -7,10 +7,10 @@
 - 更新时间：2026-09-29
 - 当前分支：以 `git branch --show-current` 为准
 - 基线提交：`a5e4c5a Record integrated production release`
-- 工作区状态：阶段 59 综合数据表样式调整已提交并发布；另有未跟踪的 `lottery-official-data-test` Worker 草稿，未发布。
+- 工作区状态：综合数据阶段 60—62 已提交并发布；另有未跟踪的 `lottery-official-data-test` Worker 草稿，未发布。
 - 当前版本：`package.json` 中为 `1.2.1`
 - 当前阶段：阶段 62 — 综合数据期号单行自适应字号
-- 阶段状态：本地修改，构建通过后待发布
+- 阶段状态：已发布，待用户验收
 
 ## 项目范围
 
@@ -569,24 +569,24 @@
 - 目标：按反馈将综合数据表所有文字改为常规字重、表头统一浅灰底，并将形态标签左右留白扩大至原来的约三倍。
 - 完成内容：表格表头与正文统一取消粗体，表头背景统一为浅灰；形态标签桌面左右 padding 从 8px 调为 24px，窄屏从 4px 调为 12px。
 - 相关文件：`src/styles.css`、`PROGRESS.md`。
-- 验证结果：待构建与差异检查。
-- 状态：本地修改，未发布。
+- 验证结果：`npm run build`、`git diff --check` 通过；与阶段61—62一并发布于 Pages 部署 `https://5d8ab9b5.caishutong-web.pages.dev`（提交 `fcbd497`），主站加载 `assets/index-D6vxekBC.js`、`assets/index-TWEF7Uan.css`。
+- 状态：已发布，待用户验收。
 
 ### 阶段 61 — 快乐8综合数据移除奖号列
 
 - 目标：仅在快乐8的详情综合数据模块中移除“奖号”列，其他彩种保持不变。
 - 完成内容：综合数据列配置对快乐8隐藏奖号列，其余数据指标不变。
 - 相关文件：`src/main.jsx`、`PROGRESS.md`。
-- 验证结果：待构建与差异检查。
-- 状态：本地修改，未发布。
+- 验证结果：`npm run build`、`git diff --check` 通过；与阶段60、62一并发布于 Pages 部署 `https://5d8ab9b5.caishutong-web.pages.dev`（提交 `fcbd497`），主站加载 `assets/index-D6vxekBC.js`、`assets/index-TWEF7Uan.css`。
+- 状态：已发布，待用户验收。
 
 ### 阶段 62 — 综合数据期号单行自适应字号
 
 - 目标：让综合数据表中的期号依据表格可用宽度缩放字号，并保持单行显示。
 - 完成内容：综合数据表外层作为尺寸查询容器；期号字号按容器宽度流动缩放并设置单行、不换行。
 - 相关文件：`src/styles.css`、`PROGRESS.md`。
-- 验证结果：待构建与差异检查。
-- 状态：本地修改，未发布。
+- 验证结果：`npm run build`、`git diff --check` 通过；Pages 部署 `https://5d8ab9b5.caishutong-web.pages.dev` 对应提交 `fcbd497`，主站已加载 `assets/index-TWEF7Uan.css`。
+- 状态：已发布，待用户验收。
 
 ### 阶段 55 — 综合数据窄屏展示细化（进行中）
 
