@@ -135,6 +135,6 @@
 - 验证方式：`npm run build`、`git diff --check`、`node --check` 通过；真实上游 HTML 的端到端 Function 调用足球/篮球均 HTTP 200，分别解析 17/14 场，响应白名单无赔率字段。独立 Pages Preview `24e5d4e5` 页面/API 均 200；浏览器确认足球/篮球切换、无赔率文案，390px 窄屏无横向溢出。纯 Vite 无 Pages Functions runtime，故仅用 Pages Preview 作最终联调。
 - 结果：`已整合 main 并发布 Production`
 - 发布证据：竞彩专属提交 `c6b924e` 快进推送至 GitHub `main`；Cloudflare Production 部署 `8653175c-14fa-4337-a123-2fd8777bd2ee` 已生成。正式域名 `/api/jingcai` 足球/篮球均 HTTP 200、17/14 场；响应字段无赔率；首页浏览器确认栏目展示和 390px 无溢出。
-- 未解决事项：独立 Preview 游客首页的开奖列表区显示错误状态，超出竞彩改动范围；建议另立任务确认其是否为 Preview 环境差异。
+- 未解决事项：正式站游客首页的开奖列表区显示“开奖数据暂时不可用”，相关接口未被本次竞彩提交修改；建议另立任务排查。
 - 下一步决策：监控公开来源页面结构和可用性；任何数据源变更均应保持竞彩编号白名单和赔率不进入响应的边界。
 - 相关任务/文件：`TASK-20261017-01`、`functions/api/jingcai.js`、`src/JingcaiSection.jsx`、`src/styles.css`、`PROGRESS.md`。
