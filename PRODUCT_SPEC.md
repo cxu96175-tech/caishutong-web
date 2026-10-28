@@ -8,9 +8,9 @@
 
 - 首页新增竞彩信息区，足球、篮球可切换。
 - 展示赛事日期/时间、场次编号（上游提供时）、联赛、主客队、比赛状态和比分/完赛结果。
-- 使用大象比分公开的竞彩足球/竞彩篮球页面做低频服务器端抓取；只请求公开 HTML 并遵守 robots.txt，不调用禁止访问的 `/api/`，不绕过访问限制。
+- 使用大象比分公开的竞彩足球/竞彩篮球赛程页和比分页做低频服务器端抓取；赛程页明确标注“竞彩官方 SP 数据”，仅提取足球胜平负与篮球胜负玩法的对应 SP。只请求公开 HTML 并遵守 robots.txt，不调用禁止访问的 `/api/`，不绕过访问限制。
 - 缓存最近成功响应；上游失败时保留有明确更新时间的旧数据，并允许用户重试。
-- 仅作赛事信息展示，不提供投注、赔率或预测；接口返回的赔率字段不得存储、转发或展示。
+- 仅作赛事信息展示，不提供投注或预测；只展示赛程页标注的竞彩官方 SP。界面统一提示赛事信息及结果仅供参考、以官方公布为准；其他机构指数/赔率和其他篮球玩法 SP 不存储、不转发、不展示。
 
 ## 验收边界
 
@@ -24,9 +24,9 @@
 
 - 技术栈：React + Vite + Cloudflare Pages Functions。
 - 上游页面：`https://www.dxvs.com/scores`（竞彩足球比分）、`https://www.dxvs.com/basketball`（竞彩篮球比分）；赛程页分别为 `/preview/football`、`/preview/basketball`。只保留竞彩编号对应记录及基础赛程/赛果字段。
-- 数据标准化字段：sport、matchId、matchNo、league、homeTeam、awayTeam、kickoffAt、status、homeScore、awayScore、updatedAt、source。
+- 数据标准化字段：sport、matchId、matchNo、league、homeTeam、awayTeam、kickoffAt、status、homeScore、awayScore、officialSp（足球胜/平/负；篮球客胜/主胜）、updatedAt、source。
 - 百查适配器不再作为运行数据源；无需密钥。
-- 已核验来源站 robots.txt 允许公开页面、禁止 `/api/`；不得请求该路径、绕过鉴权/反爬或访问限制，且赔率字段不得写入缓存、下发或展示。
+- 已核验来源站 robots.txt 允许公开页面、禁止 `/api/`；不得请求该路径、绕过鉴权/反爬或访问限制。只允许从赛程页明确标注“竞彩官方 SP 数据”的栏目提取上面限定的玩法字段。
 - 上游状态字段目前只标注整数，未公开枚举；未获说明/实测前不推断状态码含义。赛果接口有比分时才标记完赛。
 - 不把即时比分误作正式赛果；清楚标注信息仅供参考。
 

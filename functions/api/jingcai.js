@@ -1,12 +1,16 @@
 const SUPPORTED_SPORTS = new Set(['football', 'basketball'])
-const SOURCE_NAME = '大象比分公开竞彩赛事页'
+const SOURCE_NAME = '竞彩公开赛事数据'
 const SOURCE_PAGES = {
   football: 'https://www.dxvs.com/scores',
   basketball: 'https://www.dxvs.com/basketball'
 }
+const SP_PAGES = {
+  football: 'https://www.dxvs.com/preview/football',
+  basketball: 'https://www.dxvs.com/preview/basketball'
+}
 const CACHE_TTL_SECONDS = 90
 const STALE_TTL_SECONDS = 60 * 60 * 24
-const CACHE_BASE = 'https://caishutong.invalid/api/jingcai-cache'
+const CACHE_BASE = 'https://caishutong.invalid/api/jingcai-cache-v2'
 const JINGCAI_NO = /周[一二三四五六日]\d{3}/
 const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 
@@ -204,6 +208,50 @@ function parseFootball(root, sport, date, updatedAt) {
   return matches
 }
 
+function spValueFromCell(cell, matchNo, outcomes) {
+  const button = firstTag(cell, 'button')
+  const label = text(button?.attrs?.['aria-label'])
+  if (!button || !label.includes(matchNo)) return null
+  const outcome = outcomes.find(value => label.includes(value))
+  const value = label.match(/(?:^|\s)(\d{1,3}(?:\.\d{1,3})?)(?:\s|$)/)?.[1]
+  return outcome && value ? { outcome, value } : null
+}
+
+export function parseOfficialSp(html, sport) {
+  const root = parsePublicHtml(html)
+  const pageText = nodeText(root)
+  if (!pageText.includes('竞彩官方 SP 数据')) throw new Error('赛程页未明确标注竞彩官方 SP 数据')
+  const output = new Map()
+
+  if (sport === 'football') {
+    const rows = descendants(root, node => node.tag === 'tr' && hasClass(node, 'football-preview-start') && hasClass(node, 'football-preview-row'))
+    for (const row of rows) {
+      const matchNo = matchNumber(nodeText(row))
+      if (!matchNo) continue
+      const cells = descendants(row, node => node.tag === 'td' && hasClass(node, 'football-preview-sp'))
+      const fields = cells.map(cell => spValueFromCell(cell, matchNo, ['主胜', '平', '客胜'])).filter(Boolean)
+      const values = Object.fromEntries(fields.map(field => [field.outcome, field.value]))
+      if (values['主胜'] && values['平'] && values['客胜']) {
+        output.set(matchNo, { market: '胜平负', homeWin: values['主胜'], draw: values['平'], awayWin: values['客胜'] })
+      }
+    }
+    if (!rows.length) throw new Error('竞彩足球 SP 表格结构暂不兼容')
+    return output
+  }
+
+  const rows = descendants(root, node => node.tag === 'tr' && hasClass(node, 'basketball-mixed-row'))
+  for (const row of rows) {
+    const matchNo = matchNumber(nodeText(row))
+    if (!matchNo) continue
+    const cells = (row.children || []).filter(node => node.tag === 'td')
+    const awayWin = spValueFromCell(cells[5], matchNo, ['客胜'])
+    const homeWin = spValueFromCell(cells[6], matchNo, ['主胜'])
+    if (awayWin && homeWin) output.set(matchNo, { market: '胜负', awayWin: awayWin.value, homeWin: homeWin.value })
+  }
+  if (!rows.length) throw new Error('竞彩篮球 SP 表格结构暂不兼容')
+  return output
+}
+
 function basketballTeam(row, side) {
   const teamRow = firstByClass(row, `basketball-${side}`)
   const team = firstByClass(teamRow, 'basketball-team')
@@ -259,8 +307,8 @@ export function normalizeMatches(html, sport, date, updatedAt = new Date().toISO
   return matches.sort((left, right) => left.kickoffAt.localeCompare(right.kickoffAt) || left.matchNo.localeCompare(right.matchNo, 'zh-CN'))
 }
 
-async function fetchScorePage(sport, date) {
-  const response = await fetch(SOURCE_PAGES[sport], {
+async function fetchPublicPage(url) {
+  const response = await fetch(url, {
     headers: { Accept: 'text/html,application/xhtml+xml', 'User-Agent': 'CaiyantongMatchInfo/1.0 (+https://888888c.xyz)' },
     signal: AbortSignal.timeout(12000)
   })
@@ -270,6 +318,14 @@ async function fetchScorePage(sport, date) {
   const html = await response.text()
   if (html.length > 2_000_000) throw new Error('赛事页面响应超出安全大小')
   return html
+}
+
+async function fetchScorePage(sport) {
+  return fetchPublicPage(SOURCE_PAGES[sport])
+}
+
+async function fetchOfficialSpPage(sport) {
+  return fetchPublicPage(SP_PAGES[sport])
 }
 
 function cacheRequest(sport, date, stale = false) {
@@ -307,9 +363,18 @@ export async function onRequestGet({ request }) {
   const stale = await readCache(cache, staleKey)
   try {
     const updatedAt = new Date().toISOString()
-    const html = await fetchScorePage(sport, date)
-    const matches = normalizeMatches(html, sport, date, updatedAt)
-    const payload = { ok: true, sport, date, matches, updatedAt, source: SOURCE_NAME, stale: false, partial: false }
+    const [scoreResult, spResult] = await Promise.allSettled([fetchScorePage(sport), fetchOfficialSpPage(sport)])
+    if (scoreResult.status === 'rejected') throw scoreResult.reason
+    let matches = normalizeMatches(scoreResult.value, sport, date, updatedAt)
+    let spByMatch = new Map()
+    let spError = ''
+    if (spResult.status === 'fulfilled') {
+      try { spByMatch = parseOfficialSp(spResult.value, sport) }
+      catch { spError = '官方 SP 暂时无法获取，赛程和赛果仍可查看' }
+    } else spError = '官方 SP 暂时无法获取，赛程和赛果仍可查看'
+    if (!spError && matches.some(match => !spByMatch.has(match.matchNo))) spError = '部分比赛的官方 SP 暂缺，赛程和赛果仍可查看'
+    matches = matches.map(match => ({ ...match, ...(spByMatch.has(match.matchNo) ? { officialSp: spByMatch.get(match.matchNo) } : {}) }))
+    const payload = { ok: true, sport, date, matches, updatedAt, source: SOURCE_NAME, stale: false, partial: Boolean(spError), error: spError }
     await writeCache(cache, freshKey, payload, CACHE_TTL_SECONDS)
     await writeCache(cache, staleKey, payload, STALE_TTL_SECONDS)
     return Response.json(payload, { headers: { 'Cache-Control': 'public, max-age=30, stale-while-revalidate=120', 'X-Content-Type-Options': 'nosniff' } })

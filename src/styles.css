@@ -916,6 +916,11 @@
 .jingcai-score b{font-weight:750}
 .jingcai-score i{font-style:normal;color:#a1a6af}
 .jingcai-kickoff{color:#858c99;font-size:12px;text-align:right;white-space:nowrap}
+.jingcai-official-sp{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:10px 0 0;padding:8px 10px;border-radius:10px;background:#f7f8fc;color:#687181}
+.jingcai-official-sp-title{margin-right:2px;color:#747d8c;font-size:10px;white-space:nowrap}
+.jingcai-sp-value{display:inline-flex;align-items:center;gap:4px;color:#50596a;font-size:11px;white-space:nowrap}
+.jingcai-sp-value small{color:#9299a5;font-size:10px}
+.jingcai-sp-value b{font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
 .jingcai-state{display:flex;min-height:90px;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#858c99;font-size:13px;text-align:center}
 .jingcai-state.is-error{color:#707784}
 .jingcai-state.is-error b{color:#444b57}
@@ -936,4 +941,5 @@
   .jingcai-team{font-size:13px}
   .jingcai-score.has-score{font-size:15px}
   .jingcai-footer{flex-wrap:wrap}
+  .jingcai-official-sp{gap:8px;margin-top:9px;padding:8px}
 }

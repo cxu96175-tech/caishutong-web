@@ -49,6 +49,12 @@ const formatUpdatedAt = value => {
 function MatchRow({ match }) {
   const scoreAvailable = match.homeScore != null && match.awayScore != null
   const status = statusLabels[match.status] || statusLabels.unknown
+  const officialSp = match.officialSp
+  const spValues = officialSp?.market === '胜平负'
+    ? [['主胜', officialSp.homeWin], ['平', officialSp.draw], ['客胜', officialSp.awayWin]]
+    : officialSp?.market === '胜负'
+      ? [['客胜', officialSp.awayWin], ['主胜', officialSp.homeWin]]
+      : []
   return <article className="jingcai-match">
     <div className="jingcai-match-meta"><span className={`jingcai-status is-${match.status || 'unknown'}`}>{status}</span><span>{match.league || '赛事'}</span>{match.matchNo && <span>{match.matchNo}</span>}</div>
     <div className="jingcai-match-main">
@@ -59,6 +65,10 @@ function MatchRow({ match }) {
       <div className="jingcai-team away"><small>客</small><b>{match.awayTeam}</b></div>
       <time className="jingcai-kickoff" dateTime={match.kickoffAt || undefined}>{formatKickoff(match.kickoffAt)}</time>
     </div>
+    {spValues.length > 0 && <div className="jingcai-official-sp" aria-label={`竞彩 SP，${officialSp.market}`}>
+      <span className="jingcai-official-sp-title">竞彩官方 SP</span>
+      {spValues.map(([label, value]) => <span className="jingcai-sp-value" key={label}><small>{label}</small><b>{value || '--'}</b></span>)}
+    </div>}
   </article>
 }
 
@@ -137,6 +147,6 @@ export default function JingcaiSection() {
     {loading && !matches.length ? <div className="jingcai-state" role="status">正在加载{sportLabel}赛事…</div> : error && !matches.length ? <div className="jingcai-state is-error"><b>暂时无法获取赛事信息</b><span>{error}</span><button type="button" onClick={retry}>重试</button></div> : matches.length ? <div className="jingcai-list">{matches.map(match => <MatchRow key={`${match.matchId}-${match.kickoffAt}`} match={match}/>)}</div> : <div className="jingcai-state">当前暂无可展示的{sportLabel}赛事</div>}
     {error && matches.length > 0 && <div className="jingcai-inline-error">{error}</div>}
     <footer className="jingcai-footer"><span>数据来源：{source}</span><span>{stale ? '缓存数据' : '更新于'}{updatedAt ? ` ${formatUpdatedAt(updatedAt)}` : ''}</span></footer>
-    <p className="jingcai-notice">赛事比分仅供参考，最终赛果以官方赛果开奖为准。</p>
+    <p className="jingcai-notice">赛事信息及结果仅供参考，请以官方公布为准。</p>
   </section>
 }
