@@ -133,7 +133,8 @@
 - 本次尝试次数：公开来源核验后第 1 次实现。
 - 实际改动：Pages Function 读取大象比分允许访问的公开 HTML 页，仅以“周赛日+竞彩编号”筛选记录，抽取编号、赛事、开赛时间、主客队、状态、比分及更新时间；不会抓取 `/api/`，赔率不进入缓存/API/UI。真实页面不支持日期参数，因此移除日期选择器，跨日场次显示月日。补充来源缓存、过期缓存回退和请求大小/超时限制。
 - 验证方式：`npm run build`、`git diff --check`、`node --check` 通过；真实上游 HTML 的端到端 Function 调用足球/篮球均 HTTP 200，分别解析 17/14 场，响应白名单无赔率字段。独立 Pages Preview `24e5d4e5` 页面/API 均 200；浏览器确认足球/篮球切换、无赔率文案，390px 窄屏无横向溢出。纯 Vite 无 Pages Functions runtime，故仅用 Pages Preview 作最终联调。
-- 结果：`Preview 验证通过；Production 未上线`
-- 未解决原因或根因假设：本地 Git 元数据在只读路径，无法写入 index/提交；远端 Git fetch 超时。直接上传 Production 会造成版本源码未进入 main、以后 Git 构建可能回退，因此未触碰正式环境。Preview 上既有开奖区仍显示错误态，不属于本次竞彩变更，需独立确认。
-- 下一步决策：修复 GitHub main 写入链路后，将仅竞彩变更整合至最新 main，再触发 Production 发布；Cloudflare 账号登录有效。
+- 结果：`已整合 main 并发布 Production`
+- 发布证据：竞彩专属提交 `c6b924e` 快进推送至 GitHub `main`；Cloudflare Production 部署 `8653175c-14fa-4337-a123-2fd8777bd2ee` 已生成。正式域名 `/api/jingcai` 足球/篮球均 HTTP 200、17/14 场；响应字段无赔率；首页浏览器确认栏目展示和 390px 无溢出。
+- 未解决事项：独立 Preview 游客首页的开奖列表区显示错误状态，超出竞彩改动范围；建议另立任务确认其是否为 Preview 环境差异。
+- 下一步决策：监控公开来源页面结构和可用性；任何数据源变更均应保持竞彩编号白名单和赔率不进入响应的边界。
 - 相关任务/文件：`TASK-20261017-01`、`functions/api/jingcai.js`、`src/JingcaiSection.jsx`、`src/styles.css`、`PROGRESS.md`。
