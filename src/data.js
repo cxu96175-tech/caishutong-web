@@ -99,14 +99,28 @@ function normalizeRecord(game, x) {
 }
 
 async function fetchGameRecords(game, limit, { fresh = false } = {}) {
-  const meta = games[game]
   const freshness = fresh ? `&fresh=${Math.floor(Date.now() / 60000)}` : ''
   // /api/lottery 使用前端彩种 key（fc3d/pl3/pl5/kl8），不要传给上游的
   // fcsd/pls/plw/klb 代码，否则这四个彩种会被接口判定为不支持。
-  const res = await fetchWithTimeout(`${API}/lottery?game=${encodeURIComponent(game)}&limit=${limit}&v=18${freshness}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  const json = await res.json()
-  return (json.records || []).map(x => normalizeRecord(game, x))
+  try {
+    const res = await fetchWithTimeout(`${API}/lottery?game=${encodeURIComponent(game)}&limit=${limit}&v=18${freshness}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json = await res.json()
+    const records = (json.records || []).map(x => normalizeRecord(game, x))
+    if (!records.length) throw new Error('实时接口没有返回开奖记录')
+    return records
+  } catch (realtimeError) {
+    // 首页实时源不可达时，复用历史接口已经验证可用的开奖归档；
+    // 避免整块首页因为实时供应商短暂故障而显示空状态。
+    try {
+      if (!API.startsWith('/')) throw realtimeError
+      const records = await fetchHistory(game, { fresh })
+      if (!records.length) throw new Error('历史接口没有返回开奖记录')
+      return records.slice(0, limit)
+    } catch (archiveError) {
+      throw new Error(`实时开奖接口失败（${realtimeError.message}）；历史开奖兜底失败（${archiveError.message}）`)
+    }
+  }
 }
 
 function sortRecords(records) {
@@ -132,13 +146,14 @@ export async function fetchRecords(limit = 50) {
   return all
 }
 
-export async function fetchHistory(game) {
+export async function fetchHistory(game, { fresh = false } = {}) {
   const cached = historyCache.get(game)
-  if (cached && Date.now() - cached.savedAt < historyCacheLifetime) return cached.promise
+  if (!fresh && cached && Date.now() - cached.savedAt < historyCacheLifetime) return cached.promise
   const request = (async () => {
     // 历史页、走势图和详情统一读取服务端合并后的标准数据；官方源优先，
     // 归档只补旧期，避免各页面分别竞争不同数据源造成期号不一致。
-    const res = await fetchWithTimeout(`/api/history?game=${encodeURIComponent(game)}&v=2`, 30000)
+    const freshness = fresh ? `&fresh=${Math.floor(Date.now() / 60000)}` : ''
+    const res = await fetchWithTimeout(`/api/history?game=${encodeURIComponent(game)}&v=2${freshness}`, 30000)
     if (!res.ok) throw new Error(`历史接口 HTTP ${res.status}`)
     const json = await res.json()
     const records = (json.records || []).map(x => normalizeRecord(game, x))
