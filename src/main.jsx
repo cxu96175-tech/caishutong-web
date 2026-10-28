@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { Home, Dices, Bookmark, RefreshCw, ChevronRight, ChevronDown, Trash2, ArrowLeft, UserRound, Smartphone, Crown, Download, Settings, ShieldCheck, HelpCircle, Info, LogOut, Send, FileText, Database, Mail, Eye, MousePointerClick, Users, Activity, LayoutDashboard, Radio } from 'lucide-react'
 import { drawSyncInterval, fetchHistory, fetchRecords, gameOrder, generate, games, mergeRecords, readRecordsCache, rules, writeRecordsCache } from './data'
 import { playRules } from './playRules'
+import JingcaiSection from './JingcaiSection'
 import packageMetadata from '../package.json'
 import './styles.css'
 
@@ -143,7 +144,7 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
     </article> : <article className="card result-card-pending list-entry" style={{ '--list-index': index }} key={`pending-${game}`}>
       <header><div className="game"><span className={`game-icon ${game}`}>{games[game].icon}</span><div><h2>{games[game].name}</h2><p>最新期号同步中</p></div></div><div className="date">{games[game].time}<small>等待开奖数据</small></div></header>
       <div className="home-sync-placeholder">正在同步最新开奖，稍后自动重试</div>
-    </article>)}</div>}<p className="notice">数据仅供参考 · 请以官方开奖结果为准</p><BatchExportWorkspace job={batchJob}/></main>
+    </article>)}</div>}<JingcaiSection/><p className="notice">数据仅供参考 · 请以官方开奖结果为准</p><BatchExportWorkspace job={batchJob}/></main>
 }
 
 const positionNames = ['百位','十位','个位','第四位','第五位','第六位','特别号']
