@@ -19,7 +19,7 @@ export const LOTTERY_SOURCES = Object.freeze({
   kl8: { name: '快乐8', upstreamGame: 'klb', expected: 20, ranges: Array.from({ length: 20 }, () => [1, 80]), poolApplicable: false, provider: 'welfare', official: { endpoint: WELFARE_ENDPOINT, query: { name: 'kl8' }, authority: '中国福利彩票', site: 'https://www.cwl.gov.cn/' } },
   dlt: { name: '大乐透', upstreamGame: 'dlt', expected: 7, ranges: [[1, 35], [1, 35], [1, 35], [1, 35], [1, 35], [1, 12], [1, 12]], provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '85', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } },
   pl3: { name: '排列3', upstreamGame: 'pls', expected: 3, ranges: [[0, 9], [0, 9], [0, 9]], poolApplicable: false, provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '35', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } },
-  pl5: { name: '排列5', upstreamGame: 'plw', expected: 5, ranges: [[0, 9], [0, 9], [0, 9], [0, 9], [0, 9]], poolApplicable: false, provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '37', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } },
+  pl5: { name: '排列5', upstreamGame: 'plw', expected: 5, ranges: [[0, 9], [0, 9], [0, 9], [0, 9], [0, 9]], poolApplicable: false, provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '350133', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } },
   qxc: { name: '7星彩', upstreamGame: 'qxc', expected: 7, ranges: [[0, 9], [0, 9], [0, 9], [0, 9], [0, 9], [0, 9], [0, 14]], provider: 'sports', official: { endpoint: SPORTS_DIGITAL_ENDPOINT, query: { param: '04,0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } }
 })
 
@@ -121,6 +121,10 @@ function recordNumbers(row, game) {
     const front = numbersFromValue(firstValue(row, ['front', 'frontArea', 'red', 'redBall', 'redBalls', 'frontAreaNum', 'frontWinningNum']), source.expected)
     const back = numbersFromValue(firstValue(row, ['back', 'backArea', 'blue', 'blueBall', 'blueBalls', 'backAreaNum', 'backWinningNum']), source.expected)
     if (front.length === 5 && back.length === 2) return [...front, ...back]
+  }
+  if (game === 'fc3d') {
+    const digits = numbersFromValue(firstValue(row, ['red', 'redBall', 'redBalls', 'redNum', 'redNumber']), source.expected)
+    if (digits.length === source.expected) return digits
   }
   return numbersFromValue(result, source.expected)
 }

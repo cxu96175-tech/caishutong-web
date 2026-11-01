@@ -1,0 +1,42 @@
+name: Preview lottery snapshot sync
+
+on:
+  schedule:
+    # GitHub schedules use UTC; these runs cover 20:48–23:28 Asia/Shanghai.
+    - cron: '48,53,58 12 * * *'
+    - cron: '3-58/5 13,14 * * *'
+    - cron: '3-28/5 15 * * *'
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: lottery-preview-sync
+  cancel-in-progress: false
+
+jobs:
+  sync-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Collect latest draw data outside Cloudflare
+        run: node scripts/collect-lottery-latest.mjs > "$RUNNER_TEMP/lottery-latest.json"
+      - name: Request a GitHub OIDC token and sync the Preview snapshot
+        env:
+          SYNC_WORKER_URL: https://caiyan-lottery-sync-preview.cxu96175.workers.dev/sync
+        run: |
+          set -eu
+          token_response="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=caiyan-lottery-sync-preview")"
+          oidc_token="$(printf '%s' "$token_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          sync_response="$(curl --fail --silent --show-error --retry 2 --max-time 45 \
+            --request POST \
+            --header "Authorization: Bearer ${oidc_token}" \
+            --header 'Content-Type: application/json' \
+            --data-binary "@${RUNNER_TEMP}/lottery-latest.json" \
+            "$SYNC_WORKER_URL")"
+          printf '%s' "$sync_response" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); states=[item.get("state") for item in data.get("results", [])]; sys.exit(0 if data.get("ok") and any(state in ("updated-and-stopped", "metadata-enriched", "already-updated", "waiting-for-confirmation") for state in states) else 1)'
