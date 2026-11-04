@@ -2,7 +2,7 @@ import { fetchRealtimeRecords, LOTTERY_SOURCES } from '../functions/_lib/lottery
 import { enrichLatestSnapshot, inDrawWindow, readLatestSnapshot, sameDrawIssue, saveLatestSnapshot, shanghaiDate } from '../functions/_lib/lotterySnapshot.js'
 
 const GAMES = ['fc3d', 'ssq', 'dlt', 'pl3', 'pl5', 'qxc', 'qlc', 'kl8']
-const EXPECTED_AUDIENCE = 'caiyan-lottery-sync-preview'
+const DEFAULT_EXPECTED_AUDIENCE = 'caiyan-lottery-sync-preview'
 const EXPECTED_REPOSITORY = 'cxu96175-tech/caishutong-web'
 const EXPECTED_REF = 'refs/heads/main'
 const EXPECTED_WORKFLOW = `${EXPECTED_REPOSITORY}/.github/workflows/lottery-preview-sync.yml@${EXPECTED_REF}`
@@ -40,7 +40,7 @@ async function getGithubJwks(forceRefresh = false) {
   return cachedJwks
 }
 
-async function verifyGithubOidc(request) {
+async function verifyGithubOidc(request, expectedAudience = DEFAULT_EXPECTED_AUDIENCE) {
   const authorization = request.headers.get('Authorization') || ''
   const token = authorization.match(/^Bearer\s+(.+)$/i)?.[1]
   if (!token) return false
@@ -74,7 +74,7 @@ async function verifyGithubOidc(request) {
     const now = Math.floor(Date.now() / 1000)
     const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud]
     const valid = claims.iss === OIDC_ISSUER
-      && audiences.includes(EXPECTED_AUDIENCE)
+      && audiences.includes(expectedAudience)
       && claims.repository === EXPECTED_REPOSITORY
       && claims.ref === EXPECTED_REF
       && isExpectedGithubSubject(claims.sub)
@@ -118,7 +118,7 @@ function validateSubmittedResult(item) {
 
 export async function synchronize(env, checkedAt = new Date(), submitted = null, manuallyTriggered = false) {
   if (!manuallyTriggered && !inDrawWindow(checkedAt)) return { ok: true, skipped: 'outside-draw-window' }
-  if (!env?.DB) throw new Error('Preview D1 binding is unavailable')
+  if (!env?.DB) throw new Error('Lottery D1 binding is unavailable')
 
   const today = shanghaiDate(checkedAt)
   const supplied = new Map(Array.isArray(submitted?.results)
@@ -162,7 +162,7 @@ export default {
       if (request.method !== 'POST') return Response.json({ error: 'Method Not Allowed' }, { status: 405 })
       let authorized
       try {
-        authorized = await verifyGithubOidc(request)
+        authorized = await verifyGithubOidc(request, env.SYNC_AUDIENCE || DEFAULT_EXPECTED_AUDIENCE)
       } catch {
         return Response.json({ error: 'Authentication service unavailable' }, { status: 503 })
       }
