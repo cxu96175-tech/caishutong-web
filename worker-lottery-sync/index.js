@@ -6,7 +6,15 @@ const EXPECTED_AUDIENCE = 'caiyan-lottery-sync-preview'
 const EXPECTED_REPOSITORY = 'cxu96175-tech/caishutong-web'
 const EXPECTED_REF = 'refs/heads/main'
 const EXPECTED_WORKFLOW = `${EXPECTED_REPOSITORY}/.github/workflows/lottery-preview-sync.yml@${EXPECTED_REF}`
+const EXPECTED_SUBJECTS = [
+  `repo:${EXPECTED_REPOSITORY}:ref:${EXPECTED_REF}`,
+  'repo:cxu96175-tech@310116318/caishutong-web@1324034095:ref:refs/heads/main'
+]
 const OIDC_ISSUER = 'https://token.actions.githubusercontent.com'
+
+export function isExpectedGithubSubject(subject) {
+  return EXPECTED_SUBJECTS.includes(subject)
+}
 
 let cachedJwks
 let cachedJwksUntil = 0
@@ -69,7 +77,7 @@ async function verifyGithubOidc(request) {
       && audiences.includes(EXPECTED_AUDIENCE)
       && claims.repository === EXPECTED_REPOSITORY
       && claims.ref === EXPECTED_REF
-      && claims.sub === `repo:${EXPECTED_REPOSITORY}:ref:${EXPECTED_REF}`
+      && isExpectedGithubSubject(claims.sub)
       && claims.workflow_ref === EXPECTED_WORKFLOW
       && ['schedule', 'workflow_dispatch'].includes(claims.event_name)
       && Number.isFinite(claims.exp)
