@@ -12,43 +12,126 @@ const sameIssue = (game, left, right) => {
 }
 const sameNumbers = (left, right) => Array.isArray(left) && Array.isArray(right)
   && left.length === right.length && left.every((value, index) => Number(value) === Number(right[index]))
+const mergeMissingDrawMetadata = (record, supplement) => {
+  const merged = { ...record }
+  for (const key of ['saleAmount', 'poolAmount', 'poolApplicable', 'firstPrize', 'prizeRows']) {
+    if (merged[key] === undefined && supplement?.[key] !== undefined) merged[key] = supplement[key]
+  }
+  return merged
+}
+
+const MIRROR_URL = 'https://raw.githubusercontent.com/wenjinliuu/lottery-data-repo/main/public_data/v2/bootstrap.json'
+const MIRROR_TYPES = Object.freeze({ fc3d: 'fc3d', ssq: 'ssq', dlt: 'dlt', pl3: 'pl3', pl5: 'pl5', qxc: 'qxc', qlc: 'qlc', kl8: 'kl8' })
+const mirrorRecord = (game, item) => {
+  if (!item || typeof item !== 'object' || !item.numbers) return null
+  const numberGroups = {
+    fc3d: item.numbers.digits,
+    ssq: [...(item.numbers.red || []), ...(item.numbers.blue || [])],
+    dlt: [...(item.numbers.front || []), ...(item.numbers.back || [])],
+    pl3: item.numbers.digits,
+    pl5: item.numbers.digits,
+    qxc: item.numbers.digits,
+    qlc: [...(item.numbers.basic || []), item.numbers.special].filter(Number.isInteger),
+    kl8: item.numbers.nums
+  }
+  const numbers = numberGroups[game]
+  if (!Array.isArray(numbers) || numbers.length !== LOTTERY_SOURCES[game].expected) return null
+  const prizes = Array.isArray(item.prizes) ? item.prizes : []
+  const prizeRows = prizes.map(prize => ({
+    level: String(prize.name || '').replace(/奖$/, ''),
+    ...(Number.isFinite(Number(prize.amount)) ? { amount: Number(prize.amount) } : {}),
+    ...(Number.isFinite(Number(prize.winners)) ? { count: Number(prize.winners) } : {})
+  })).filter(prize => prize.level)
+  const firstPrize = prizeRows.find(prize => game === 'pl3' ? prize.level === '直选' : prize.level === '一等奖')
+  const record = {
+    issue: String(item.issue || ''), drawDate: String(item.date || '').slice(0, 10), numbers: numbers.map(Number),
+    ...(item.sales != null && Number.isFinite(Number(item.sales)) ? { saleAmount: Number(item.sales) } : {}),
+    ...(item.pool != null && Number.isFinite(Number(item.pool)) ? { poolAmount: Number(item.pool) } : {}),
+    poolApplicable: !['fc3d', 'pl3', 'pl5', 'kl8'].includes(game),
+    ...(prizeRows.length ? { prizeRows } : {}),
+    ...(firstPrize ? { firstPrize } : {})
+  }
+  const ranges = LOTTERY_SOURCES[game].ranges
+  if (!/^\d{4,8}$/.test(record.issue) || !/^\d{4}-\d{2}-\d{2}$/.test(record.drawDate)
+    || numbers.some((value, index) => !Number.isInteger(Number(value))
+      || Number(value) < ranges[index][0] || Number(value) > ranges[index][1])) return null
+  return record
+}
+
+async function fetchPublicMirror() {
+  const response = await fetch(MIRROR_URL, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) })
+  if (!response.ok) throw new Error(`GitHub 开奖镜像 HTTP ${response.status}`)
+  const payload = await response.json()
+  const generatedAt = Date.parse(payload?.generated_at || '')
+  if (payload?.schema !== 'duigehao.lottery.bootstrap' || payload?.version !== 2
+    || !Number.isFinite(generatedAt) || Date.now() - generatedAt > 48 * 60 * 60 * 1000) {
+    throw new Error('GitHub 开奖镜像格式错误或超过48小时未更新')
+  }
+  const records = Object.fromEntries(Object.entries(MIRROR_TYPES).map(([game, type]) => {
+    const record = mirrorRecord(game, payload.latest?.[type])
+    return [game, record ? {
+      record,
+      source: 'github-mirror:wenjinliuu/lottery-data-repo',
+      sourceName: 'GitHub 公开开奖镜像（按期校验）',
+      sourceType: 'third-party',
+      sourceUrl: MIRROR_URL,
+      verified: false,
+      metadataSource: record.saleAmount !== undefined || record.firstPrize ? 'GitHub 公开开奖镜像' : null
+    } : null]
+  }))
+  return { generatedAt: payload.generated_at, records }
+}
+
+const mirrorPromise = fetchPublicMirror().catch(error => ({
+  error: errorText(error), records: {}
+}))
 
 async function collect(game) {
-  const [official, publicDetail] = await Promise.allSettled([
+  const [official, publicDetail, mirror] = await Promise.allSettled([
     fetchOfficial(game, 1),
-    fetchProxy(game, 1)
+    fetchProxy(game, 1),
+    mirrorPromise
   ])
   const officialResult = official.status === 'fulfilled' ? official.value : null
   const publicResult = publicDetail.status === 'fulfilled' ? publicDetail.value : null
+  const mirrorResult = mirror.status === 'fulfilled' ? mirror.value.records?.[game] : null
+  const mirrorIssue = Number(mirrorResult?.record?.issue || 0)
   const officialIssue = Number(officialResult?.records?.[0]?.issue || 0)
   const publicIssue = Number(publicResult?.records?.[0]?.issue || 0)
   const primary = officialResult && publicResult && publicIssue > officialIssue
     && !sameIssue(game, officialIssue, publicIssue) ? publicResult : officialResult || publicResult
-  if (!primary?.records?.[0]) return {
+  const newestMirror = mirrorResult && (!primary || (mirrorIssue > Number(primary.records?.[0]?.issue || 0)
+    && !sameIssue(game, primary.records?.[0]?.issue, mirrorResult.record.issue))) ? mirrorResult : null
+  const chosen = primary || newestMirror
+  if (!chosen) return {
     game,
     error: '没有可用的最新期开奖',
     sourceErrors: {
       official: official.status === 'rejected' ? errorText(official.reason) : '接口未返回有效记录',
-      fallback: publicDetail.status === 'rejected' ? errorText(publicDetail.reason) : '接口未返回有效记录'
+      fallback: publicDetail.status === 'rejected' ? errorText(publicDetail.reason) : '接口未返回有效记录',
+      mirror: mirrorResult ? '镜像无可用记录' : (mirror.status === 'rejected' ? errorText(mirror.reason) : mirrorResult?.error || mirror.value?.error || '镜像未返回有效记录')
     }
   }
 
-  const record = { ...primary.records[0] }
-  let metadataSource = null
-  if (primary === officialResult && publicResult) {
-    const supplement = publicResult.records[0]
+  const record = { ...(chosen.record || chosen.records[0]) }
+  let metadataSource = chosen === newestMirror ? chosen.metadataSource : null
+  const supplements = [
+    ...(primary === officialResult && publicResult ? [publicResult] : []),
+    ...(mirrorResult && !newestMirror ? [mirrorResult] : [])
+  ]
+  for (const supplementResult of supplements) {
+    const supplement = supplementResult.record || supplementResult.records?.[0]
     if (supplement && sameIssue(game, record.issue, supplement.issue)
       && sameNumbers(record.numbers, supplement.numbers)) {
-      for (const key of ['saleAmount', 'poolAmount', 'firstPrize']) {
-        if (record[key] === undefined && supplement[key] !== undefined) record[key] = supplement[key]
-      }
-      metadataSource = publicResult.source
+      Object.assign(record, mergeMissingDrawMetadata(record, supplement))
+      metadataSource = supplementResult.metadataSource || supplementResult.source
     }
   }
   return {
-    game, record, verified: primary === officialResult,
-    source: primary.source, sourceName: primary.sourceName,
-    sourceType: primary.sourceType, sourceUrl: primary.sourceUrl,
+    game, record, verified: chosen === primary && primary === officialResult,
+    source: chosen.source, sourceName: chosen.sourceName,
+    sourceType: chosen.sourceType, sourceUrl: chosen.sourceUrl,
+    ...(chosen === newestMirror ? { metadataSource: chosen.metadataSource } : {}),
     metadataSource
   }
 }
