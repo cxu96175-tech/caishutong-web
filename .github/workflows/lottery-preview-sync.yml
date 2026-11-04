@@ -7,9 +7,6 @@ on:
     - cron: '3-58/5 13,14 * * *'
     - cron: '3-28/5 15 * * *'
   workflow_dispatch:
-  push:
-    paths:
-      - .github/workflows/lottery-preview-sync.yml
 
 permissions:
   id-token: write
@@ -36,10 +33,17 @@ jobs:
             --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=caiyan-lottery-sync-preview")"
           oidc_token="$(printf '%s' "$token_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
-          sync_response="$(curl --fail --silent --show-error --retry 2 --max-time 45 \
+          printf '%s' "$oidc_token" | python3 -c 'import base64,json,sys; part=sys.stdin.read().split(".")[1]; claims=json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))); keys=("iss","aud","repository","ref","sub","workflow_ref","event_name"); print("OIDC claims:", json.dumps({key:claims.get(key) for key in keys}, ensure_ascii=False))'
+          sync_status="$(curl --silent --show-error --retry 2 --max-time 45 \
+            --output "$RUNNER_TEMP/sync-response.json" --write-out '%{http_code}' \
             --request POST \
             --header "Authorization: Bearer ${oidc_token}" \
             --header 'Content-Type: application/json' \
             --data-binary "@${RUNNER_TEMP}/lottery-latest.json" \
             "$SYNC_WORKER_URL")"
-          printf '%s' "$sync_response" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); states=[item.get("state") for item in data.get("results", [])]; sys.exit(0 if data.get("ok") and any(state in ("updated-and-stopped", "metadata-enriched", "already-updated", "waiting-for-confirmation") for state in states) else 1)'
+          cat "$RUNNER_TEMP/sync-response.json"
+          if [ "$sync_status" -lt 200 ] || [ "$sync_status" -ge 300 ]; then
+            printf '\\nPreview sync returned HTTP %s\\n' "$sync_status"
+            exit 1
+          fi
+          printf '%s' "$(cat "$RUNNER_TEMP/sync-response.json")" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); states=[item.get("state") for item in data.get("results", [])]; sys.exit(0 if data.get("ok") and any(state in ("updated-and-stopped", "metadata-enriched", "already-updated", "waiting-for-confirmation") for state in states) else 1)'
