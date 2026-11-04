@@ -7,6 +7,9 @@ on:
     - cron: '3-58/5 13,14 * * *'
     - cron: '3-28/5 15 * * *'
   workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/lottery-preview-sync.yml
 
 permissions:
   id-token: write
