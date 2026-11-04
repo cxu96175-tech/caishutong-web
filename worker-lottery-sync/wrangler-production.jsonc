@@ -1,0 +1,18 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "caiyan-lottery-sync-production",
+  "main": "./index.js",
+  "compatibility_date": "2026-08-08",
+  "vars": {
+    "SYNC_AUDIENCE": "caiyan-lottery-sync-production"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "caishutong-analytics",
+      "database_id": "e133bbbc-902d-4b37-8464-a086524e8f66",
+      "migrations_dir": "../migrations/production"
+    }
+  ],
+  "observability": { "enabled": true }
+}
