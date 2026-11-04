@@ -1,6 +1,11 @@
 import { fetchOfficial, fetchProxy, LOTTERY_SOURCES } from '../functions/_lib/lotterySources.js'
 
 const games = Object.keys(LOTTERY_SOURCES)
+const errorText = error => {
+  const message = error instanceof Error ? error.message : String(error)
+  const cause = error?.cause?.code || error?.cause?.message
+  return cause ? `${message} (${cause})` : message
+}
 const sameIssue = (game, left, right) => {
   const canonical = value => ['dlt', 'qxc', 'pl3', 'pl5'].includes(game) ? String(value).slice(-5) : String(value)
   return canonical(left) === canonical(right)
@@ -19,7 +24,14 @@ async function collect(game) {
   const publicIssue = Number(publicResult?.records?.[0]?.issue || 0)
   const primary = officialResult && publicResult && publicIssue > officialIssue
     && !sameIssue(game, officialIssue, publicIssue) ? publicResult : officialResult || publicResult
-  if (!primary?.records?.[0]) return { game, error: '没有可用的最新期开奖' }
+  if (!primary?.records?.[0]) return {
+    game,
+    error: '没有可用的最新期开奖',
+    sourceErrors: {
+      official: official.status === 'rejected' ? errorText(official.reason) : '接口未返回有效记录',
+      fallback: publicDetail.status === 'rejected' ? errorText(publicDetail.reason) : '接口未返回有效记录'
+    }
+  }
 
   const record = { ...primary.records[0] }
   let metadataSource = null
@@ -43,7 +55,7 @@ async function collect(game) {
 
 const results = await Promise.all(games.map(collect))
 if (!results.some(result => result.record)) {
-  console.error('所有彩种的最新开奖采集均失败')
+  console.error(JSON.stringify({ error: '所有彩种的最新开奖采集均失败', results }, null, 2))
   process.exitCode = 1
 } else {
   process.stdout.write(JSON.stringify({ collectedAt: new Date().toISOString(), results }))
