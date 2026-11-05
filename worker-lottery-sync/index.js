@@ -116,8 +116,13 @@ function validateSubmittedResult(item) {
   }
 }
 
-export async function synchronize(env, checkedAt = new Date(), submitted = null, manuallyTriggered = false) {
-  if (!manuallyTriggered && !inDrawWindow(checkedAt)) return { ok: true, skipped: 'outside-draw-window' }
+export async function synchronize(env, checkedAt = new Date(), submitted = null, manuallyTriggered = false, scheduledTrigger = false) {
+  // The GitHub schedule is already constrained to the draw window. GitHub may
+  // queue scheduled runs well after their cron time, so do not reject a valid
+  // OIDC-authenticated scheduled run based on the worker's later wall clock.
+  if (!manuallyTriggered && !scheduledTrigger && !inDrawWindow(checkedAt)) {
+    return { ok: true, skipped: 'outside-draw-window' }
+  }
   if (!env?.DB) throw new Error('Lottery D1 binding is unavailable')
 
   const today = shanghaiDate(checkedAt)
@@ -171,7 +176,13 @@ export default {
         const raw = await request.text()
         if (raw.length > 32768) return Response.json({ error: 'Payload too large' }, { status: 413 })
         const submitted = raw ? JSON.parse(raw) : null
-        return Response.json(await synchronize(env, new Date(), submitted, authorized === 'workflow_dispatch'))
+        return Response.json(await synchronize(
+          env,
+          new Date(),
+          submitted,
+          authorized === 'workflow_dispatch',
+          authorized === 'schedule'
+        ))
       } catch (error) {
         console.error('lottery-sync run failed', error instanceof Error ? error.message : String(error))
         return Response.json({ error: 'Lottery synchronization failed' }, { status: 500 })
