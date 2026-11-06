@@ -6,6 +6,9 @@ on:
     - cron: '48,53,58 12 * * *'
     - cron: '3-58/5 13,14 * * *'
     - cron: '3-28/5 15 * * *'
+  push:
+    paths:
+      - '.github/workflows/lottery-preview-sync.yml'
   workflow_dispatch:
 
 permissions:
@@ -46,7 +49,7 @@ jobs:
             printf '\\nPreview sync returned HTTP %s\\n' "$sync_status"
             exit 1
           fi
-          printf '%s' "$(cat "$RUNNER_TEMP/sync-response.json")" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); states=[item.get("state") for item in data.get("results", [])]; sys.exit(0 if data.get("ok") and any(state in ("updated-and-stopped", "metadata-enriched", "already-updated", "waiting-for-confirmation") for state in states) else 1)'
+          printf '%s' "$(cat "$RUNNER_TEMP/sync-response.json")" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); results=data.get("results", []); games={item.get("game") for item in results}; states=[item.get("state") for item in results]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced"}; expected={"fc3d","ssq","qlc","kl8","dlt","pl3","pl5","qxc"}; sys.exit(0 if data.get("ok") and games==expected and not bad.intersection(states) else 1)'
 
           production_token_response="$(curl --fail --silent --show-error \
             --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
@@ -64,4 +67,4 @@ jobs:
             printf '\\nProduction sync returned HTTP %s\\n' "$production_status"
             exit 1
           fi
-          printf '%s' "$(cat "$RUNNER_TEMP/production-sync-response.json")" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); states=[item.get("state") for item in data.get("results", [])]; sys.exit(0 if data.get("ok") and any(state in ("updated-and-stopped", "metadata-enriched", "already-updated", "waiting-for-confirmation") for state in states) else 1)'
+          printf '%s' "$(cat "$RUNNER_TEMP/production-sync-response.json")" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); results=data.get("results", []); games={item.get("game") for item in results}; states=[item.get("state") for item in results]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced"}; expected={"fc3d","ssq","qlc","kl8","dlt","pl3","pl5","qxc"}; sys.exit(0 if data.get("ok") and games==expected and not bad.intersection(states) else 1)'
