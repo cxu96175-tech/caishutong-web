@@ -2,6 +2,18 @@ import { fetchRealtimeRecords, LOTTERY_SOURCES } from '../functions/_lib/lottery
 import { enrichLatestSnapshot, inDrawWindow, readLatestSnapshot, sameDrawIssue, saveLatestSnapshot, shanghaiDate } from '../functions/_lib/lotterySnapshot.js'
 
 const GAMES = ['fc3d', 'ssq', 'dlt', 'pl3', 'pl5', 'qxc', 'qlc', 'kl8']
+const DRAW_WEEKDAYS = Object.freeze({
+  fc3d: [0, 1, 2, 3, 4, 5, 6], ssq: [0, 2, 4], dlt: [1, 3, 6],
+  pl3: [0, 1, 2, 3, 4, 5, 6], pl5: [0, 1, 2, 3, 4, 5, 6],
+  qxc: [0, 2, 5], qlc: [1, 3, 5], kl8: [0, 1, 2, 3, 4, 5, 6]
+})
+const isExpectedDrawDay = (game, date) => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Shanghai', weekday: 'short', hour: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date).map(part => [part.type, part.value]))
+  const weekday = ({ Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 })[parts.weekday]
+  return DRAW_WEEKDAYS[game]?.includes(weekday) && Number(parts.hour) >= 22
+}
 const DEFAULT_EXPECTED_AUDIENCE = 'caiyan-lottery-sync-preview'
 const EXPECTED_REPOSITORY = 'cxu96175-tech/caishutong-web'
 const EXPECTED_REF = 'refs/heads/main'
@@ -79,7 +91,7 @@ async function verifyGithubOidc(request, expectedAudience = DEFAULT_EXPECTED_AUD
       && claims.ref === EXPECTED_REF
       && isExpectedGithubSubject(claims.sub)
       && claims.workflow_ref === EXPECTED_WORKFLOW
-      && ['schedule', 'workflow_dispatch'].includes(claims.event_name)
+      && ['schedule', 'workflow_dispatch', 'push'].includes(claims.event_name)
       && Number.isFinite(claims.exp)
       && Number.isFinite(claims.nbf)
       && now <= claims.exp + 60
@@ -137,14 +149,23 @@ export async function synchronize(env, checkedAt = new Date(), submitted = null,
       const enriched = await enrichLatestSnapshot(env.DB, game, latest, upstream.metadataSource || upstream.source, checkedAt)
       if (previous.completedOn === today) return { game, state: enriched ? 'metadata-enriched' : 'already-updated' }
     }
-    if (previous?.completedOn === today) return { game, state: 'already-updated' }
+    if (previous?.completedOn === today && (!latest || Number(latest.issue) <= Number(previous.issue))) {
+      return { game, state: 'already-updated' }
+    }
 
     if (!latest) return { game, state: 'empty' }
 
-    const currentDatedDraw = String(latest.drawDate || '').slice(0, 10) === today
-    await saveLatestSnapshot(env.DB, game, upstream, checkedAt)
+    const persisted = await saveLatestSnapshot(env.DB, game, upstream, checkedAt)
+    if (!persisted && previous && Number(latest.issue) <= Number(previous.issue)) {
+      return {
+        game,
+        state: isExpectedDrawDay(game, checkedAt) ? 'upstream-not-advanced' : 'no-new-draw',
+        issue: latest.issue,
+        previousIssue: previous.issue
+      }
+    }
 
-    const confirmed = Boolean(upstream.verified && currentDatedDraw)
+    const confirmed = Boolean(upstream.verified)
     return { game, state: confirmed ? 'updated-and-stopped' : 'waiting-for-confirmation', issue: latest.issue }
   }))
 
@@ -180,7 +201,7 @@ export default {
           env,
           new Date(),
           submitted,
-          authorized === 'workflow_dispatch',
+          authorized === 'workflow_dispatch' || authorized === 'push',
           authorized === 'schedule'
         ))
       } catch (error) {
