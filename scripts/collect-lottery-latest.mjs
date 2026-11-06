@@ -1,4 +1,5 @@
 import { fetchOfficial, fetchProxy, LOTTERY_SOURCES } from '../functions/_lib/lotterySources.js'
+import { parseOfficialSsqNoticeHtml } from '../functions/_lib/ssqNotice.js'
 
 const games = Object.keys(LOTTERY_SOURCES)
 const errorText = error => {
@@ -21,6 +22,7 @@ const mergeMissingDrawMetadata = (record, supplement) => {
 }
 
 const MIRROR_URL = 'https://raw.githubusercontent.com/wenjinliuu/lottery-data-repo/main/public_data/v2/bootstrap.json'
+const SWLC_SSQ_URL = 'https://www.swlc.net.cn/lottery/ssq.html?limit=100&view=previous'
 const MIRROR_TYPES = Object.freeze({ fc3d: 'fc3d', ssq: 'ssq', dlt: 'dlt', pl3: 'pl3', pl5: 'pl5', qxc: 'qxc', qlc: 'qlc', kl8: 'kl8' })
 const mirrorRecord = (game, item) => {
   if (!item || typeof item !== 'object' || !item.numbers) return null
@@ -82,11 +84,36 @@ async function fetchPublicMirror() {
   return { generatedAt: payload.generated_at, records }
 }
 
+async function fetchOfficialSsqNotice() {
+  const response = await fetch(SWLC_SSQ_URL, {
+    headers: { Accept: 'text/html', 'Cache-Control': 'no-cache', 'User-Agent': 'Mozilla/5.0 (compatible; LotteryNotice/1.0)' },
+    signal: AbortSignal.timeout(10000)
+  })
+  if (!response.ok) throw new Error(`上海福彩公告 HTTP ${response.status}`)
+  const html = await response.text()
+  const record = parseOfficialSsqNoticeHtml(html)
+  if (record) {
+    return { game: 'ssq', record, verified: true,
+      source: 'official:swlc.net.cn', sourceName: '上海市福利彩票发行中心官方开奖公告',
+      sourceType: 'official', sourceUrl: SWLC_SSQ_URL }
+  }
+  throw new Error('上海福彩公告未解析到有效双色球记录')
+}
+
 const mirrorPromise = fetchPublicMirror().catch(error => ({
   error: errorText(error), records: {}
 }))
 
 async function collect(game) {
+  if (game === 'ssq') {
+    try {
+      const officialNotice = await fetchOfficialSsqNotice()
+      const apiResult = await fetchOfficial(game, 1).catch(() => null)
+      if (!apiResult || Number(officialNotice.record.issue) > Number(apiResult.records?.[0]?.issue || 0)) return officialNotice
+    } catch (error) {
+      console.warn(`双色球官方公告回退失败：${errorText(error)}`)
+    }
+  }
   const [official, publicDetail, mirror] = await Promise.allSettled([
     fetchOfficial(game, 1),
     fetchProxy(game, 1),
