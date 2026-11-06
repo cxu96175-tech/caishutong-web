@@ -34,7 +34,9 @@ export async function saveLatestSnapshot(db, game, result, date = new Date()) {
   const record = result?.records?.[0]
   if (!record || !/^\d{4,8}$/.test(String(record.issue || '')) || !Array.isArray(record.numbers) || !record.numbers.length) return false
   const previous = await db.prepare('SELECT issue, checked_at, source_json FROM lottery_latest WHERE game = ?').bind(game).first()
-  const completedOn = result.verified && isCurrentDraw(record, date) ? shanghaiDate(date) : ''
+  // Mark the snapshot completed on the day it is verified, even when the
+  // collector catches up a draw published on the previous calendar day.
+  const completedOn = result.verified ? shanghaiDate(date) : ''
   const source = {
     source: result.source,
     sourceName: result.sourceName,
@@ -77,9 +79,13 @@ export async function enrichLatestSnapshot(db, game, incoming, metadataSource, d
       changed = true
     }
   }
+  if (record.poolApplicable === undefined && typeof incoming.poolApplicable === 'boolean') {
+    record.poolApplicable = incoming.poolApplicable
+    changed = true
+  }
   if (record.firstPrize?.amount == null && Number.isFinite(incoming.firstPrize?.amount)
     && incoming.firstPrize.amount >= 0 && incoming.firstPrize.amount <= 1e10) {
-    record.firstPrize = { level: '一等奖', amount: incoming.firstPrize.amount }
+    record.firstPrize = { level: incoming.firstPrize.level || '一等奖', amount: incoming.firstPrize.amount }
     changed = true
   }
   if (!changed) return false
