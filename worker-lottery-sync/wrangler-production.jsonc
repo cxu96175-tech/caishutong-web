@@ -3,6 +3,9 @@
   "name": "caiyan-lottery-sync-production",
   "main": "./index.js",
   "compatibility_date": "2026-08-08",
+  "triggers": {
+    "crons": ["*/5 * * * *"]
+  },
   "vars": {
     "SYNC_AUDIENCE": "caiyan-lottery-sync-production"
   },
