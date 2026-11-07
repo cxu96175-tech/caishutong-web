@@ -32,7 +32,7 @@ const welfareTableConfig = Object.freeze({
 
 const parseMoney = value => {
   const text = String(value || '').replace(/,/g, '').trim()
-  const numeric = Number(text.match(/-?\\d+(?:\\.\\d+)?/)?.[0])
+  const numeric = Number(text.match(/-?\d+(?:\.\d+)?/)?.[0])
   if (!Number.isFinite(numeric)) return undefined
   return Math.round(numeric * (text.includes('亿') ? 100000000 : text.includes('万') ? 10000 : 1))
 }
@@ -41,13 +41,13 @@ export function parseOfficialWelfareNoticeHtml(html, game) {
   const config = welfareTableConfig[game]
   if (!config) return []
   const records = []
-  for (const [, row] of String(html).matchAll(/<tr\\b[^>]*>([\\s\\S]*?)<\\/tr>/gi)) {
-    const cells = [...row.matchAll(/<td\\b[^>]*>([\\s\\S]*?)<\\/td>/gi)].map(([, cell]) => cell)
-    const issue = cleanCell(cells[0] || '').match(/(20\\d{5})/)?.[1]
-    const drawDate = cleanCell(cells[1] || '').match(/(20\\d{2}-\\d{2}-\\d{2})/)?.[1]
+  for (const [, row] of String(html).matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(([, cell]) => cell)
+    const issue = cleanCell(cells[0] || '').match(/(20\d{5})/)?.[1]
+    const drawDate = cleanCell(cells[1] || '').match(/(20\d{2}-\d{2}-\d{2})/)?.[1]
     if (!issue || !drawDate) continue
     const ballCells = cells.slice(2, game === 'qlc' ? 4 : game === 'ssq' ? 4 : 3)
-    const numbers = ballCells.flatMap(cell => [...cell.matchAll(/<i\\b[^>]*>([\\s\\S]*?)<\\/i>/gi)].map(([, value]) => Number(cleanCell(value))))
+    const numbers = ballCells.flatMap(cell => [...cell.matchAll(/<i\b[^>]*>([\s\S]*?)<\/i>/gi)].map(([, value]) => Number(cleanCell(value))))
     if (numbers.length !== config.count || numbers.some((number, index) => !Number.isInteger(number)
       || number < config.ranges[index][0] || number > config.ranges[index][1])) continue
     if (game !== 'fc3d' && new Set(numbers).size !== numbers.length) continue
