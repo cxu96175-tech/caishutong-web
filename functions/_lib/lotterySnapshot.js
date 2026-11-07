@@ -36,7 +36,7 @@ export async function saveLatestSnapshot(db, game, result, date = new Date()) {
   const previous = await db.prepare('SELECT issue, checked_at, source_json FROM lottery_latest WHERE game = ?').bind(game).first()
   // Mark the snapshot completed on the day it is verified, even when the
   // collector catches up a draw published on the previous calendar day.
-  const completedOn = result.verified ? shanghaiDate(date) : ''
+  const completedOn = result.verified && isCurrentDraw(record, date) ? shanghaiDate(date) : ''
   const source = {
     source: result.source,
     sourceName: result.sourceName,
