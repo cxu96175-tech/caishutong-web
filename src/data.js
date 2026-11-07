@@ -108,6 +108,8 @@ async function fetchGameRecords(game, limit, { fresh = false } = {}) {
     const json = await res.json()
     const records = (json.records || []).map(x => normalizeRecord(game, x))
     if (!records.length) throw new Error('实时接口没有返回开奖记录')
+    records.refreshStatus = json.refreshStatus || 'read'
+    records.refreshError = json.refreshError || ''
     return records
   } catch (realtimeError) {
     // 首页实时源不可达时，复用历史接口已经验证可用的开奖归档；
@@ -116,6 +118,8 @@ async function fetchGameRecords(game, limit, { fresh = false } = {}) {
       if (!API.startsWith('/')) throw realtimeError
       const records = await fetchHistory(game, { fresh })
       if (!records.length) throw new Error('历史接口没有返回开奖记录')
+      records.refreshStatus = fresh ? 'failed' : 'read'
+      records.refreshError = fresh ? realtimeError.message : ''
       return records.slice(0, limit)
     } catch (archiveError) {
       throw new Error(`实时开奖接口失败（${realtimeError.message}）；历史开奖兜底失败（${archiveError.message}）`)
@@ -136,10 +140,16 @@ export function mergeRecords(current, archive) {
   return sortRecords([...byIssue.values()])
 }
 
-export async function fetchRecords(limit = 50) {
+export async function fetchRecords(limit = 50, onGameLoaded, { fresh = false, onRefreshStatus } = {}) {
   const results = await Promise.allSettled(gameOrder.map(async game => {
-    return fetchGameRecords(game, limit)
+    const records = await fetchGameRecords(game, limit, { fresh })
+    onRefreshStatus?.({ game, status: records.refreshStatus || 'read', message: records.refreshError || '' })
+    if (records.length) onGameLoaded?.(records)
+    return records
   }))
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') onRefreshStatus?.({ game: gameOrder[index], status: 'failed', message: result.reason?.message || '' })
+  })
   const all = results.flatMap(x => x.status === 'fulfilled' ? x.value : [])
   if (!all.length) throw new Error('开奖数据暂时不可用')
   writeRecordsCache(all)
