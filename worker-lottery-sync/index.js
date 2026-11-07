@@ -1,5 +1,5 @@
 import { fetchRealtimeRecords, LOTTERY_SOURCES } from '../functions/_lib/lotterySources.js'
-import { enrichLatestSnapshot, inDrawWindow, readLatestSnapshot, sameDrawIssue, saveLatestSnapshot, shanghaiDate } from '../functions/_lib/lotterySnapshot.js'
+import { enrichLatestSnapshot, inDrawWindow, isCurrentDraw, readLatestSnapshot, sameDrawIssue, saveLatestSnapshot, shanghaiDate } from '../functions/_lib/lotterySnapshot.js'
 
 const GAMES = ['fc3d', 'ssq', 'dlt', 'pl3', 'pl5', 'qxc', 'qlc', 'kl8']
 const DRAW_WEEKDAYS = Object.freeze({
@@ -142,6 +142,14 @@ export async function synchronize(env, checkedAt = new Date(), submitted = null,
     ? submitted.results.filter(item => GAMES.includes(item?.game)).map(item => [item.game, validateSubmittedResult(item)]) : [])
   const results = await Promise.allSettled(GAMES.map(async game => {
     const previous = await readLatestSnapshot(env.DB, game)
+    if (previous?.completedOn === today && !isCurrentDraw(previous.record, checkedAt)) {
+      await env.DB.prepare('UPDATE lottery_latest SET completed_on = ? WHERE game = ? AND issue = ?')
+        .bind('', game, String(previous.issue)).run()
+      previous.completedOn = ''
+    }
+    if (scheduledTrigger && !submitted && previous?.completedOn === today && isCurrentDraw(previous.record, checkedAt)) {
+      return { game, state: 'already-updated', issue: previous.issue }
+    }
     const upstream = submitted ? supplied.get(game) : await fetchRealtimeRecords(game, 1)
     if (!upstream) return { game, state: submitted ? 'missing-or-invalid-submission' : 'empty' }
     const latest = upstream.records?.[0]
@@ -179,10 +187,22 @@ export async function synchronize(env, checkedAt = new Date(), submitted = null,
 }
 
 export default {
+  async scheduled(controller, env, ctx) {
+    const checkedAt = new Date(controller?.scheduledTime || Date.now())
+    if (!inDrawWindow(checkedAt)) return { ok: true, skipped: 'outside-draw-window' }
+    const sync = synchronize(env, checkedAt, null, false, true)
+      .catch(error => {
+        console.error('scheduled lottery sync failed', error instanceof Error ? error.message : String(error))
+        throw error
+      })
+    ctx?.waitUntil?.(sync)
+    return sync
+  },
+
   async fetch(request, env) {
     const url = new URL(request.url)
     if (url.pathname === '/health' && request.method === 'GET') {
-      return Response.json({ ok: true, service: 'lottery-sync', scheduler: 'github-actions-preview' })
+      return Response.json({ ok: true, service: 'lottery-sync', scheduler: 'cloudflare-cron+github-actions' })
     }
     if (url.pathname === '/sync') {
       if (request.method !== 'POST') return Response.json({ error: 'Method Not Allowed' }, { status: 405 })
