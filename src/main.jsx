@@ -63,12 +63,45 @@ function BatchExportWorkspace({ job }) {
 
 function HomePage({ open, openTrend, openHistory, openRules, canExport = false }) {
   const cached = useMemo(() => readRecordsCache(), [])
-  const [all, setAll] = useState(() => cached?.records || []), [loading, setLoading] = useState(() => !cached?.records?.length), [error, setError] = useState(''), [stamp, setStamp] = useState(() => cached?.savedAt ? new Date(cached.savedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '')
+  const [all, setAll] = useState(() => cached?.records || []), [loading, setLoading] = useState(() => !cached?.records?.length), [error, setError] = useState(''), [refreshMessage, setRefreshMessage] = useState(''), [stamp, setStamp] = useState(() => cached?.savedAt ? new Date(cached.savedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : '')
   const allRef = useRef(all)
   const [batchJob, setBatchJob] = useState(null), [batchExporting, setBatchExporting] = useState(false), [batchProgress, setBatchProgress] = useState({ current:0, total:0 })
   // 首页只展示每个彩种的最新一期；历史与走势图按需加载，避免首屏携带 120 期数据。
   // 部分彩种临时失败时，保留已有记录，避免一次请求把整张首页列表替换成不完整结果。
-  const load = async () => { setLoading(true); setError(''); try { const rows = await fetchRecords(1); setAll(current => { const byGame = new Map(); for (const record of [...rows, ...current]) { if (!record?.game) continue; const previous = byGame.get(record.game); if (!previous || Number(record.issue) > Number(previous.issue)) byGame.set(record.game, record) } const merged = gameOrder.map(game => byGame.get(game)).filter(Boolean); allRef.current = merged; writeRecordsCache(merged); return merged }); setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })) } catch (e) { if (!allRef.current.length) setError(e.message) } finally { setLoading(false) } }
+  const load = async (fresh = false) => {
+    setLoading(true); setError('')
+    if (fresh) setRefreshMessage('')
+    const refreshResults = new Map()
+    try {
+      const rows = await fetchRecords(1, undefined, { fresh, onRefreshStatus: result => refreshResults.set(result.game, result) })
+      setAll(current => {
+        const byGame = new Map()
+        for (const record of [...rows, ...current]) {
+          if (!record?.game) continue
+          const previous = byGame.get(record.game)
+          if (!previous || Number(record.issue) > Number(previous.issue)) byGame.set(record.game, record)
+        }
+        const merged = gameOrder.map(game => byGame.get(game)).filter(Boolean)
+        allRef.current = merged
+        writeRecordsCache(merged)
+        return merged
+      })
+      if (!fresh) setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
+      else {
+        const results = [...refreshResults.values()]
+        const failed = results.filter(result => ['failed', 'unverified'].includes(result.status))
+        const updated = results.filter(result => result.status === 'updated').length
+        const cooling = results.some(result => result.status === 'cooldown')
+        if (failed.length) setRefreshMessage(`有 ${failed.length} 个彩种未能完成刷新，仍保留上次有效开奖。`)
+        else if (cooling) setRefreshMessage('刷新请求刚刚已提交，请稍后再试。')
+        else setRefreshMessage(updated ? `已更新 ${updated} 个彩种，其余彩种暂未发布新一期。` : '已检查所有彩种，暂未发现新一期。')
+        if (!failed.length && !cooling) setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
+      }
+    } catch (e) {
+      if (!allRef.current.length) setError(e.message)
+      if (fresh) setRefreshMessage('刷新未完成，当前仍保留上次有效开奖。')
+    } finally { setLoading(false) }
+  }
   useEffect(() => {
     let timer
     let active = true
@@ -131,7 +164,7 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
       trackAnalytics('export_batch',{ page:'home', count:exportItems.length })
     } finally { setBatchJob(null); setBatchExporting(false); setBatchProgress({ current:0, total:0 }) }
   }
-  return <main><div className="section-head home-section-head"><div className="home-refresh">{canExport && <button type="button" className="home-batch-export-button" onClick={exportBatch} disabled={batchExporting || !latest.length}><Download size={14}/>{batchExporting ? `导出中 ${batchProgress.current}/${batchProgress.total}` : '一键导出图片'}</button>}{stamp && <span>更新于 {stamp}</span>}<button className="icon-btn" onClick={() => load(true)} aria-label="刷新"><RefreshCw size={14} className={loading ? 'spin' : ''}/></button></div></div>
+  return <main><div className="section-head home-section-head"><div className="home-refresh">{canExport && <button type="button" className="home-batch-export-button" onClick={exportBatch} disabled={batchExporting || !latest.length}><Download size={14}/>{batchExporting ? `导出中 ${batchProgress.current}/${batchProgress.total}` : '一键导出图片'}</button>}{stamp && <span>更新于 {stamp}</span>}<button className="icon-btn" onClick={() => load(true)} aria-label="刷新"><RefreshCw size={14} className={loading ? 'spin' : ''}/></button></div></div>{refreshMessage && <p role="status" style={{ margin:'-14px 0 12px', textAlign:'right', color:'#747b89', fontSize:12 }}>{refreshMessage}</p>}
     {loading && !latest.length ? <div className="cards">{[1,2,3].map(i => <div className="card skeleton" key={i}/>)}</div> : error ? <div className="state"><b>加载失败</b><p>{error}</p><button onClick={load}>重新加载</button></div> : <div className="cards">{displayRows.map(({ game, record:r },index) => r ? <article className="card result-card list-entry" style={{ '--list-index': index }} key={r.id}>
       <header><div className="game"><span className={`game-icon ${r.game}`}>{r.icon}</span><div><h2>{r.name}</h2><p>第 {r.issue} 期</p></div></div><div className="date">{r.drawDate}<small>{r.drawTime} 开奖</small></div></header>
       <Balls groups={[{ values: r.redBalls }, { values: r.blueBalls, accent: true }]}/>
