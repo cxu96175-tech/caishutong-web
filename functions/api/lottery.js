@@ -3,7 +3,7 @@ import { readLatestSnapshot, saveLatestSnapshot, shanghaiDate } from '../_lib/lo
 
 const GAMES = new Set(Object.keys(LOTTERY_SOURCES))
 
-function snapshotPayload(game, snapshot, refreshStatus = null) {
+function snapshotPayload(game, snapshot, refreshStatus = null, refreshError = null) {
   const source = { ...snapshot.source, checkedAt: snapshot.checkedAt, stale: false }
   return Response.json({
     ok: true, game, records: [snapshot.record],
@@ -11,7 +11,8 @@ function snapshotPayload(game, snapshot, refreshStatus = null) {
     latestIssue: snapshot.issue, latestDrawDate: snapshot.record.drawDate || null,
     completedToday: snapshot.completedOn === shanghaiDate(),
     snapshot: true,
-    ...(refreshStatus ? { refreshStatus } : {})
+    ...(refreshStatus ? { refreshStatus } : {}),
+    ...(refreshError ? { refreshError } : {})
   }, { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } })
 }
 
@@ -59,8 +60,18 @@ export async function onRequestGet({ request, waitUntil, env }) {
 
   try {
     const result = await fetchRealtimeRecords(game, limit)
-    if (limit === 1 && !issue && env?.DB) {
-      try { await saveLatestSnapshot(env.DB, game, result) } catch { /* 数据库暂不可用不能阻断开奖结果。 */ }
+    if (forceRefresh && previousSnapshot && result.verified !== true) {
+      return snapshotPayload(game, previousSnapshot, 'unverified', '本次未能从可信来源核验最新开奖，已保留原数据。')
+    }
+    if (limit === 1 && !issue && env?.DB && result.verified === true) {
+      try {
+        const saved = await saveLatestSnapshot(env.DB, game, result)
+        if (forceRefresh && previousSnapshot && Number(result.records?.[0]?.issue || 0) > Number(previousSnapshot.issue || 0) && !saved) {
+          return snapshotPayload(game, previousSnapshot, 'failed', '已取得新期数据，但未能保存到开奖快照。')
+        }
+      } catch (error) {
+        if (forceRefresh && previousSnapshot) return snapshotPayload(game, previousSnapshot, 'failed', error instanceof Error ? error.message : '开奖快照保存失败')
+      }
     }
     if (forceRefresh && previousSnapshot) {
       try {
