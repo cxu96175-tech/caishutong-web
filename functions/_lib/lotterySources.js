@@ -315,7 +315,7 @@ async function fetchText(url, options = {}, timeout = 8000) {
 export async function fetchOfficial(game, limit) {
   const url = buildOfficialUrl(game, limit)
   if (SWLC_PAGES[game]) {
-    const pageUrl = new URL(\`https://www.swlc.net.cn/lottery/\${SWLC_PAGES[game]}.html\`)
+    const pageUrl = new URL(`https://www.swlc.net.cn/lottery/${SWLC_PAGES[game]}.html`)
     pageUrl.searchParams.set('limit', String(Math.min(100, Math.max(10, limit))))
     pageUrl.searchParams.set('view', 'previous')
     try {
@@ -328,7 +328,7 @@ export async function fetchOfficial(game, limit) {
       const records = parseOfficialWelfareNoticeHtml(html, game).slice(0, limit)
       if (records.length) return {
         records,
-        source: \`official:\${pageUrl.hostname}\`,
+        source: `official:${pageUrl.hostname}`,
         sourceName: '上海市福利彩票发行中心官方开奖公告',
         sourceUrl: String(pageUrl),
         sourceType: 'official', fallback: false, verified: true
