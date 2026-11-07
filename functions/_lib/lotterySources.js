@@ -1,4 +1,7 @@
+import { parseOfficialWelfareNoticeHtml } from './ssqNotice.js'
+
 const PROXY_ENDPOINT = 'https://lottery-official-data.cxu96175.workers.dev/lottery'
+const SWLC_PAGES = Object.freeze({ fc3d: '3d', ssq: 'ssq', qlc: 'qlc', kl8: 'kl8' })
 const KJH_ENDPOINT = 'https://www.00038.cn/kjh'
 const KJH_BASE = 'https://www.00038.cn'
 const KJH_PATHS = Object.freeze({ fc3d: '3d', ssq: 'ssq', dlt: 'dlt', pl3: 'p3', pl5: 'p5', qxc: 'qxc', qlc: 'qlc', kl8: 'kl8' })
@@ -311,6 +314,27 @@ async function fetchText(url, options = {}, timeout = 8000) {
 
 export async function fetchOfficial(game, limit) {
   const url = buildOfficialUrl(game, limit)
+  if (SWLC_PAGES[game]) {
+    const pageUrl = new URL(\`https://www.swlc.net.cn/lottery/\${SWLC_PAGES[game]}.html\`)
+    pageUrl.searchParams.set('limit', String(Math.min(100, Math.max(10, limit))))
+    pageUrl.searchParams.set('view', 'previous')
+    try {
+      const html = await fetchText(pageUrl, { headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        'Cache-Control': 'no-cache',
+        'User-Agent': 'Mozilla/5.0 (compatible; LotteryNotice/1.0)'
+      } })
+      const records = parseOfficialWelfareNoticeHtml(html, game).slice(0, limit)
+      if (records.length) return {
+        records,
+        source: \`official:\${pageUrl.hostname}\`,
+        sourceName: '上海市福利彩票发行中心官方开奖公告',
+        sourceUrl: String(pageUrl),
+        sourceType: 'official', fallback: false, verified: true
+      }
+    } catch { /* 官方公告页暂不可用时回退到中国福彩网数据接口。 */ }
+  }
   const payload = await fetchJson(url, { headers: { Accept: 'application/json, text/plain, */*', 'Accept-Language': 'zh-CN,zh;q=0.9', 'Cache-Control': 'no-cache', Referer: LOTTERY_SOURCES[game].official.site, 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36' } })
   const records = sortUnique(parseOfficialRows(payload, game)).slice(0, limit)
   if (!records.length) throw new Error('官方接口没有返回有效开奖记录')
