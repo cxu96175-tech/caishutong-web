@@ -9,6 +9,10 @@ on:
   push:
     paths:
       - '.github/workflows/lottery-preview-sync.yml'
+      - 'functions/_lib/lotterySources.js'
+      - 'functions/_lib/ssqNotice.js'
+      - 'functions/api/lottery.js'
+      - 'scripts/collect-lottery-latest.mjs'
   workflow_dispatch:
 
 permissions:
