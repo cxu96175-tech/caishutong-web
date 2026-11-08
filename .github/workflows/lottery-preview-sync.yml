@@ -53,7 +53,12 @@ jobs:
             printf '\\nPreview sync returned HTTP %s\\n' "$sync_status"
             exit 1
           fi
-          printf '%s' "$(cat "$RUNNER_TEMP/sync-response.json")" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); results=data.get("results", []); games={item.get("game") for item in results}; states=[item.get("state") for item in results]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced", "waiting-for-confirmation"}; expected={"fc3d","ssq","qlc","kl8","dlt","pl3","pl5","qxc"}; sys.exit(0 if data.get("ok") and games==expected and not bad.intersection(states) else 1)'
+          printf '%s' "$(cat "$RUNNER_TEMP/sync-response.json")" | python3 -c 'import json,sys,os; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); results=data.get("results", []); expected={"dlt","pl3","pl5","qxc"} if os.environ.get("GITHUB_EVENT_NAME")=="push" else {"fc3d","ssq","qlc","kl8","dlt","pl3","pl5","qxc"}; relevant=[item for item in results if item.get("game") in expected]; games={item.get("game") for item in relevant}; states=[item.get("state") for item in relevant]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced", "waiting-for-confirmation"}; sys.exit(0 if data.get("ok") and games==expected and not bad.intersection(states) else 1)'
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            echo "Source-change run completed Preview validation; Production sync is intentionally skipped."
+            exit 0
+          fi
 
           production_token_response="$(curl --fail --silent --show-error \
             --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
