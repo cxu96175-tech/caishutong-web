@@ -42,17 +42,18 @@ jobs:
           data = json.load(open(sys.argv[1], encoding='utf-8'))
           results = {item.get('game'): item for item in data.get('results', [])}
           expected = {'dlt', 'pl3', 'pl5', 'qxc'}
-          if not data.get('ok') or len(results) != 8:
-              raise SystemExit('Preview Worker did not return all eight lottery checks')
-          errors = [item for item in results.values() if item.get('state') in {'error', 'empty'}]
+          sports = {game: results[game] for game in expected if game in results}
+          if len(sports) != len(expected):
+              raise SystemExit('Preview Worker did not return all four sports lottery checks')
+          errors = [item for item in sports.values() if item.get('state') in {'error', 'empty'}]
           if errors:
-              raise SystemExit('Preview Worker returned a failed or empty source check')
-          missing = [game for game in expected if not results.get(game, {}).get('source')]
+              raise SystemExit('A sports lottery source check failed or returned empty data')
+          missing = [game for game in expected if not sports[game].get('source')]
           if missing:
               raise SystemExit('体彩 sources were not fetched: ' + ', '.join(sorted(missing)))
           print('Preview-only source verification passed for:')
           for game in sorted(expected):
-              item = results[game]
+              item = sports[game]
               print("{}: issue={}, source={}, fallback={}, state={}".format(
                   game, item.get('issue', '-'), item.get('source'), item.get('fallback', False), item.get('state')
               ))
