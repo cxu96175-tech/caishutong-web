@@ -1,5 +1,5 @@
 import { fetchRealtimeRecords, sourceSummary, LOTTERY_SOURCES } from '../_lib/lotterySources.js'
-import { readLatestSnapshot, saveLatestSnapshot, shanghaiDate } from '../_lib/lotterySnapshot.js'
+import { enrichLatestSnapshot, readLatestSnapshot, saveLatestSnapshot, sameDrawIssue, shanghaiDate } from '../_lib/lotterySnapshot.js'
 
 const GAMES = new Set(Object.keys(LOTTERY_SOURCES))
 
@@ -60,11 +60,20 @@ export async function onRequestGet({ request, waitUntil, env }) {
 
   try {
     const result = await fetchRealtimeRecords(game, limit)
+    let metadataEnriched = false
     if (forceRefresh && previousSnapshot && result.verified !== true) {
       return snapshotPayload(game, previousSnapshot, 'unverified', '本次未能从可信来源核验最新开奖，已保留原数据。')
     }
     if (limit === 1 && !issue && env?.DB && result.verified === true) {
       try {
+        const refreshedRecord = result.records?.[0]
+        if (forceRefresh && previousSnapshot && refreshedRecord
+          && sameDrawIssue(game, previousSnapshot.issue, refreshedRecord.issue)) {
+          metadataEnriched = await enrichLatestSnapshot(
+            env.DB, game, refreshedRecord, result.metadataSource || result.source,
+            result.checkedAt ? new Date(result.checkedAt) : new Date()
+          )
+        }
         const saved = await saveLatestSnapshot(env.DB, game, result)
         if (forceRefresh && previousSnapshot && Number(result.records?.[0]?.issue || 0) > Number(previousSnapshot.issue || 0) && !saved) {
           return snapshotPayload(game, previousSnapshot, 'failed', '已取得新期数据，但未能保存到开奖快照。')
@@ -79,7 +88,7 @@ export async function onRequestGet({ request, waitUntil, env }) {
         if (latestSnapshot) {
           const fetchedIssue = Number(result.records?.[0]?.issue || 0)
           const savedIssue = Number(latestSnapshot.issue || 0)
-          const refreshStatus = fetchedIssue > Number(previousSnapshot.issue || 0) && savedIssue >= fetchedIssue
+          const refreshStatus = metadataEnriched || (fetchedIssue > Number(previousSnapshot.issue || 0) && savedIssue >= fetchedIssue)
             ? 'updated'
             : 'no-new-draw'
           return snapshotPayload(game, latestSnapshot, refreshStatus)
