@@ -129,6 +129,9 @@ async function collect(game) {
     && !sameIssue(game, officialIssue, publicIssue) ? publicResult : officialResult || publicResult
   const newestMirror = mirrorResult && (!primary || (mirrorIssue > Number(primary.records?.[0]?.issue || 0)
     && !sameIssue(game, primary.records?.[0]?.issue, mirrorResult.record.issue))) ? mirrorResult : null
+  if (!officialResult && official.status === 'rejected') console.warn(`[${game}] 官方源采集失败：${errorText(official.reason)}`)
+  if (!publicResult && publicDetail.status === 'rejected') console.warn(`[${game}] 回退源采集失败：${errorText(publicDetail.reason)}`)
+  if (!mirrorResult && mirror.status === 'rejected') console.warn(`[${game}] 镜像采集失败：${errorText(mirror.reason)}`)
   const chosen = primary || newestMirror
   if (!chosen) return {
     game,
