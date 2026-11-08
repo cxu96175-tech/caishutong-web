@@ -73,11 +73,21 @@ export async function enrichLatestSnapshot(db, game, incoming, metadataSource, d
     || left.some((value, index) => Number(value) !== Number(right[index]))) return false
   const record = { ...current.record }
   let changed = false
+  // Correct a legacy regional FC3D sales value only from the national
+  // Welfare Lottery API, and only after issue and winning digits match above.
+  const authoritativeNationalFc3d = game === 'fc3d' && metadataSource === 'official:www.cwl.gov.cn'
   for (const key of ['saleAmount', 'poolAmount']) {
-    if (record[key] == null && Number.isFinite(incoming[key]) && incoming[key] >= 0 && incoming[key] <= 1e12) {
+    const mayCorrectRegionalFc3dSales = key === 'saleAmount' && authoritativeNationalFc3d
+      && Number.isFinite(record[key]) && Number.isFinite(incoming[key]) && incoming[key] !== record[key]
+    if ((record[key] == null || mayCorrectRegionalFc3dSales)
+      && Number.isFinite(incoming[key]) && incoming[key] >= 0 && incoming[key] <= 1e12) {
       record[key] = incoming[key]
       changed = true
     }
+  }
+  if (authoritativeNationalFc3d && record.poolApplicable !== false) {
+    record.poolApplicable = false
+    changed = true
   }
   if (record.poolApplicable === undefined && typeof incoming.poolApplicable === 'boolean') {
     record.poolApplicable = incoming.poolApplicable
