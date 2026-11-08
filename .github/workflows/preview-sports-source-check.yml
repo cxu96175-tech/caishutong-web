@@ -34,7 +34,7 @@ jobs:
             "$SYNC_WORKER_URL")"
           cat "$RUNNER_TEMP/preview-sync-response.json"
           if [ "$sync_status" -lt 200 ] || [ "$sync_status" -ge 300 ]; then
-            printf '\\nPreview sync returned HTTP %s\\n' "$sync_status"
+            printf '\nPreview sync returned HTTP %s\n' "$sync_status"
             exit 1
           fi
           python3 - "$RUNNER_TEMP/preview-sync-response.json" <<'PY'
