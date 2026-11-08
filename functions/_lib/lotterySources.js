@@ -20,10 +20,10 @@ export const LOTTERY_SOURCES = Object.freeze({
   ssq: { name: '双色球', upstreamGame: 'ssq', expected: 7, ranges: [[1, 33], [1, 33], [1, 33], [1, 33], [1, 33], [1, 33], [1, 16]], provider: 'welfare', official: { endpoint: WELFARE_ENDPOINT, query: { name: 'ssq' }, authority: '中国福利彩票', site: 'https://www.cwl.gov.cn/' } },
   qlc: { name: '七乐彩', upstreamGame: 'qlc', expected: 8, ranges: [[1, 30], [1, 30], [1, 30], [1, 30], [1, 30], [1, 30], [1, 30], [1, 30]], provider: 'welfare', official: { endpoint: WELFARE_ENDPOINT, query: { name: 'qlc' }, authority: '中国福利彩票', site: 'https://www.cwl.gov.cn/' } },
   kl8: { name: '快乐8', upstreamGame: 'klb', expected: 20, ranges: Array.from({ length: 20 }, () => [1, 80]), poolApplicable: false, provider: 'welfare', official: { endpoint: WELFARE_ENDPOINT, query: { name: 'kl8' }, authority: '中国福利彩票', site: 'https://www.cwl.gov.cn/' } },
-  dlt: { name: '大乐透', upstreamGame: 'dlt', expected: 7, ranges: [[1, 35], [1, 35], [1, 35], [1, 35], [1, 35], [1, 12], [1, 12]], provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '85', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } },
-  pl3: { name: '排列3', upstreamGame: 'pls', expected: 3, ranges: [[0, 9], [0, 9], [0, 9]], poolApplicable: false, provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '35', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } },
-  pl5: { name: '排列5', upstreamGame: 'plw', expected: 5, ranges: [[0, 9], [0, 9], [0, 9], [0, 9], [0, 9]], poolApplicable: false, provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '350133', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } },
-  qxc: { name: '7星彩', upstreamGame: 'qxc', expected: 7, ranges: [[0, 9], [0, 9], [0, 9], [0, 9], [0, 9], [0, 9], [0, 14]], provider: 'sports', official: { endpoint: SPORTS_DIGITAL_ENDPOINT, query: { param: '04,0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' } }
+  dlt: { name: '大乐透', upstreamGame: 'dlt', expected: 7, ranges: [[1, 35], [1, 35], [1, 35], [1, 35], [1, 35], [1, 12], [1, 12]], provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '85', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' }, regionalOfficial: { endpoint: 'https://api.js-lottery.com/wfzq/dlt/data', authority: '江苏省体育彩票管理中心' } },
+  pl3: { name: '排列3', upstreamGame: 'pls', expected: 3, ranges: [[0, 9], [0, 9], [0, 9]], poolApplicable: false, provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '35', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' }, regionalOfficial: { endpoint: 'https://api.js-lottery.com/wfzq/p3p5/p3data', authority: '江苏省体育彩票管理中心' } },
+  pl5: { name: '排列5', upstreamGame: 'plw', expected: 5, ranges: [[0, 9], [0, 9], [0, 9], [0, 9], [0, 9]], poolApplicable: false, provider: 'sports', official: { endpoint: SPORTS_HISTORY_ENDPOINT, query: { gameNo: '350133', provinceId: '0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' }, regionalOfficial: { endpoint: 'https://api.js-lottery.com/wfzq/p3p5/p5data', authority: '江苏省体育彩票管理中心' } },
+  qxc: { name: '7星彩', upstreamGame: 'qxc', expected: 7, ranges: [[0, 9], [0, 9], [0, 9], [0, 9], [0, 9], [0, 9], [0, 14]], provider: 'sports', official: { endpoint: SPORTS_DIGITAL_ENDPOINT, query: { param: '04,0', isVerify: '1' }, authority: '中国体育彩票', site: 'https://www.lottery.gov.cn/' }, regionalOfficial: { endpoint: 'https://www.gstc.org.cn/wanfa/qxc_history', authority: '甘肃省体育彩票管理中心' } }
 })
 
 const text = value => typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
@@ -195,7 +195,42 @@ function normalizeExternalRecord(record, game) {
 }
 
 function stripHtml(value) {
-  return String(value || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ').replace(/\s+/g, ' ').trim()
+  return String(value || '').replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/[０-９]/g, digit => String.fromCharCode(digit.charCodeAt(0) - 0xFEE0))
+    .replace(/\s+/g, ' ').trim()
+}
+
+export function parseOfficialSportsHistoryHtml(html, game) {
+  const config = LOTTERY_SOURCES[game]
+  if (!config?.regionalOfficial) return []
+  const rows = String(html || '').match(/<tr\b[\s\S]*?<\/tr>/gi) || []
+  const records = []
+  for (const row of rows) {
+    const cells = (row.match(/<t[dh]\b[\s\S]*?<\/t[dh]>/gi) || []).map(stripHtml)
+    if (cells.length < 3) continue
+    const dateIndex = cells.findIndex(cell => /20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}日?/.test(cell))
+    const issueIndex = cells.findIndex(cell => /^\s*(?:第\s*)?\d{5,8}\s*(?:期)?\s*$/.test(cell))
+    if (dateIndex < 0 || issueIndex < 0) continue
+    const dateMatch = cells[dateIndex].match(/(20\d{2})[-/.年](\d{1,2})[-/.月](\d{1,2})日?/)
+    if (!dateMatch) continue
+    const drawDate = `${dateMatch[1]}-${dateMatch[2].padStart(2, '0')}-${dateMatch[3].padStart(2, '0')}`
+    const issue = canonicalIssue(cells[issueIndex], game)
+    let numbers = []
+    for (let index = Math.max(dateIndex, issueIndex) + 1; index < cells.length && numbers.length < config.expected; index += 1) {
+      if (/詳細|详情/.test(cells[index])) break
+      const parts = numbersFromValue(cells[index], config.expected)
+      if (parts.length) numbers = [...numbers, ...parts]
+    }
+    if (numbers.length !== config.expected) {
+      const candidates = cells.filter((_, index) => index !== dateIndex && index !== issueIndex)
+        .map(cell => numbersFromValue(cell, config.expected))
+      numbers = candidates.find(candidate => candidate.length === config.expected) || numbers
+    }
+    const record = { issue, drawDate, numbers, ...metadataFromRow({}, game) }
+    if (validateRecord(record, game)) records.push(record)
+  }
+  return sortUnique(records)
 }
 
 function moneyTextValue(value) {
@@ -314,31 +349,41 @@ async function fetchText(url, options = {}, timeout = 8000) {
 
 export async function fetchOfficial(game, limit) {
   const url = buildOfficialUrl(game, limit)
-  if (SWLC_PAGES[game]) {
-    const pageUrl = new URL(`https://www.swlc.net.cn/lottery/${SWLC_PAGES[game]}.html`)
-    pageUrl.searchParams.set('limit', String(Math.min(100, Math.max(10, limit))))
-    pageUrl.searchParams.set('view', 'previous')
+  let primaryError
+  try {
+    const payload = await fetchJson(url, { headers: { Accept: 'application/json, text/plain, */*', 'Accept-Language': 'zh-CN,zh;q=0.9', 'Cache-Control': 'no-cache', Referer: LOTTERY_SOURCES[game].official.site, 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36' } })
+    const records = sortUnique(parseOfficialRows(payload, game)).slice(0, limit)
+    if (!records.length) throw new Error('官方接口没有返回有效开奖记录')
+    return { records, source: `official:${new URL(url).hostname}`, sourceName: `${LOTTERY_SOURCES[game].official.authority}官方接口`, sourceUrl: String(url), sourceType: 'official', fallback: false, verified: true }
+  } catch (error) {
+    primaryError = error instanceof Error ? error.message : String(error)
+  }
+
+  const regional = LOTTERY_SOURCES[game].regionalOfficial
+  if (regional) {
     try {
-      const html = await fetchText(pageUrl, { headers: {
+      const html = await fetchText(regional.endpoint, { headers: {
         Accept: 'text/html,application/xhtml+xml',
         'Accept-Language': 'zh-CN,zh;q=0.9',
         'Cache-Control': 'no-cache',
         'User-Agent': 'Mozilla/5.0 (compatible; LotteryNotice/1.0)'
-      } })
-      const records = parseOfficialWelfareNoticeHtml(html, game).slice(0, limit)
-      if (records.length) return {
+      } }, 10000)
+      const records = parseOfficialSportsHistoryHtml(html, game).slice(0, limit)
+      if (!records.length) throw new Error('官方历史页未解析到有效开奖记录')
+      return {
         records,
-        source: `official:${pageUrl.hostname}`,
-        sourceName: '上海市福利彩票发行中心官方开奖公告',
-        sourceUrl: String(pageUrl),
-        sourceType: 'official', fallback: false, verified: true
+        source: `official:${new URL(regional.endpoint).hostname}`,
+        sourceName: `${regional.authority}官方历史开奖`,
+        sourceUrl: regional.endpoint,
+        sourceType: 'official', fallback: true, verified: true,
+        fallbackReason: `中国体彩网接口暂不可用：${primaryError}`
       }
-    } catch { /* 官方公告页暂不可用时回退到中国福彩网数据接口。 */ }
+    } catch (error) {
+      const regionalError = error instanceof Error ? error.message : String(error)
+      throw new Error(`中国体彩网接口失败：${primaryError}；${regional.authority}官方历史页失败：${regionalError}`)
+    }
   }
-  const payload = await fetchJson(url, { headers: { Accept: 'application/json, text/plain, */*', 'Accept-Language': 'zh-CN,zh;q=0.9', 'Cache-Control': 'no-cache', Referer: LOTTERY_SOURCES[game].official.site, 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36' } })
-  const records = sortUnique(parseOfficialRows(payload, game)).slice(0, limit)
-  if (!records.length) throw new Error('官方接口没有返回有效开奖记录')
-  return { records, source: `official:${new URL(url).hostname}`, sourceName: `${LOTTERY_SOURCES[game].official.authority}官方接口`, sourceUrl: String(url), sourceType: 'official', fallback: false, verified: true }
+  throw new Error(primaryError)
 }
 
 export async function fetchProxy(game, limit) {
