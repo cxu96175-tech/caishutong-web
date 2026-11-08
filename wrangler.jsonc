@@ -14,5 +14,21 @@
       "database_id": "e133bbbc-902d-4b37-8464-a086524e8f66",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "env": {
+    "preview": {
+      "vars": {
+        "ADMIN_EMAIL": "1226779246@qq.com",
+        "EMAIL_FROM": "彩研通 <verify@mail.888888c.xyz>"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "caishutong-lottery-preview",
+          "database_id": "871f5655-1b88-41a6-8542-515e0b12c623",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }
