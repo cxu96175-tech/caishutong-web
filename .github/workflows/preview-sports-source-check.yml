@@ -1,0 +1,57 @@
+name: Preview official sports source check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: preview-sports-source-check
+  cancel-in-progress: false
+
+jobs:
+  check-preview-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Request Preview-only GitHub OIDC token and sync
+        env:
+          SYNC_WORKER_URL: https://caiyan-lottery-sync-preview.cxu96175.workers.dev/sync
+        run: |
+          set -eu
+          token_response="$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=caiyan-lottery-sync-preview")"
+          oidc_token="$(printf '%s' "$token_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          sync_status="$(curl --silent --show-error --retry 2 --max-time 60 \
+            --output "$RUNNER_TEMP/preview-sync-response.json" --write-out '%{http_code}' \
+            --request POST \
+            --header "Authorization: Bearer ${oidc_token}" \
+            --header 'Content-Type: application/json' \
+            --data-binary '' \
+            "$SYNC_WORKER_URL")"
+          cat "$RUNNER_TEMP/preview-sync-response.json"
+          if [ "$sync_status" -lt 200 ] || [ "$sync_status" -ge 300 ]; then
+            printf '\\nPreview sync returned HTTP %s\\n' "$sync_status"
+            exit 1
+          fi
+          python3 - "$RUNNER_TEMP/preview-sync-response.json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+          results = {item.get('game'): item for item in data.get('results', [])}
+          expected = {'dlt', 'pl3', 'pl5', 'qxc'}
+          if not data.get('ok') or len(results) != 8:
+              raise SystemExit('Preview Worker did not return all eight lottery checks')
+          errors = [item for item in results.values() if item.get('state') in {'error', 'empty'}]
+          if errors:
+              raise SystemExit('Preview Worker returned a failed or empty source check')
+          missing = [game for game in expected if not results.get(game, {}).get('source')]
+          if missing:
+              raise SystemExit('体彩 sources were not fetched: ' + ', '.join(sorted(missing)))
+          print('Preview-only source verification passed for:')
+          for game in sorted(expected):
+              item = results[game]
+              print(f"'{'}'f{game}: issue={item.get('issue', '-')}, source={item.get('source')}, fallback={item.get('fallback', False)}, state={item.get('state')}'{' }'}")
+          PY
