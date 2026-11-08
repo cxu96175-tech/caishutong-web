@@ -53,5 +53,7 @@ jobs:
           print('Preview-only source verification passed for:')
           for game in sorted(expected):
               item = results[game]
-              print(f"'{'}'f{game}: issue={item.get('issue', '-')}, source={item.get('source')}, fallback={item.get('fallback', False)}, state={item.get('state')}'{' }'}")
+              print("{}: issue={}, source={}, fallback={}, state={}".format(
+                  game, item.get('issue', '-'), item.get('source'), item.get('fallback', False), item.get('state')
+              ))
           PY
