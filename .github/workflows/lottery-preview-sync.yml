@@ -6,7 +6,7 @@ on:
     paths:
       - '.github/workflows/lottery-preview-sync.yml'
   schedule:
-    # GitHub schedules use UTC; these runs cover 20:48–23:28 Asia/Shanghai.
+    # GitHub schedules use UTC; runs cover 20:48–23:28 Asia/Shanghai and sync both snapshots.
     - cron: '48,53,58 12 * * *'
     - cron: '3-58/5 13,14 * * *'
     - cron: '3-28/5 15 * * *'
