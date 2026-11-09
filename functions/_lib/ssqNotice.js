@@ -22,19 +22,15 @@ export function parseOfficialSsqNoticeHtml(html) {
   return null
 }
 
-
 const welfareTableConfig = Object.freeze({
-  fc3d: { count: 3, ranges: [[0, 9], [0, 9], [0, 9]], saleIndex: 3 },
   ssq: { count: 7, ranges: [...Array.from({ length: 6 }, () => [1, 33]), [1, 16]], saleIndex: 4, firstPrizeCountIndex: 5, firstPrizeAmountIndex: 6, poolIndex: 7 },
   qlc: { count: 8, ranges: [...Array.from({ length: 8 }, () => [1, 30])], saleIndex: 4, firstPrizeCountIndex: 5, firstPrizeAmountIndex: 6, poolIndex: 11 },
   kl8: { count: 20, ranges: Array.from({ length: 20 }, () => [1, 80]), saleIndex: 3 }
 })
 
 const parseMoney = value => {
-  const text = String(value || '').replace(/,/g, '').trim()
-  const numeric = Number(text.match(/-?\d+(?:\.\d+)?/)?.[0])
-  if (!Number.isFinite(numeric)) return undefined
-  return Math.round(numeric * (text.includes('亿') ? 100000000 : text.includes('万') ? 10000 : 1))
+  const number = Number(String(value || '').replace(/[^\d.-]/g, ''))
+  return Number.isFinite(number) ? number : undefined
 }
 
 export function parseOfficialWelfareNoticeHtml(html, game) {

@@ -2,17 +2,10 @@ name: Lottery snapshot sync
 
 on:
   schedule:
-    # GitHub schedules use UTC; these runs cover 20:49–23:29 Asia/Shanghai.
-    - cron: '49,54,59 12 * * *'
-    - cron: '4-59/5 13,14 * * *'
-    - cron: '4-29/5 15 * * *'
-  push:
-    paths:
-      - '.github/workflows/lottery-preview-sync.yml'
-      - 'functions/_lib/lotterySources.js'
-      - 'functions/_lib/ssqNotice.js'
-      - 'functions/api/lottery.js'
-      - 'scripts/collect-lottery-latest.mjs'
+    # GitHub schedules use UTC; these runs cover 20:48–23:28 Asia/Shanghai.
+    - cron: '48,53,58 12 * * *'
+    - cron: '3-58/5 13,14 * * *'
+    - cron: '3-28/5 15 * * *'
   workflow_dispatch:
 
 permissions:
@@ -24,14 +17,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync-snapshots:
+  collect-latest:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - name: Collect latest draw data outside Cloudflare
         run: node scripts/collect-lottery-latest.mjs > "$RUNNER_TEMP/lottery-latest.json"
-      - name: Sync isolated Preview and Production lottery snapshots
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lottery-latest
+          path: ${{ runner.temp }}/lottery-latest.json
+          retention-days: 1
+
+  sync-preview:
+    needs: collect-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: lottery-latest
+          path: ${{ runner.temp }}
+      - name: Request a GitHub OIDC token and sync the Preview snapshot
         env:
           SYNC_WORKER_URL: https://caiyan-lottery-sync-preview.cxu96175.workers.dev/sync
         run: |
@@ -40,40 +48,36 @@ jobs:
             --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=caiyan-lottery-sync-preview")"
           oidc_token="$(printf '%s' "$token_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
-          printf '%s' "$oidc_token" | python3 -c 'import base64,json,sys; part=sys.stdin.read().split(".")[1]; claims=json.loads(base64.urlsafe_b64decode(part + "=" * (-len(part) % 4))); keys=("iss","aud","repository","ref","sub","workflow_ref","event_name"); print("OIDC claims:", json.dumps({key:claims.get(key) for key in keys}, ensure_ascii=False))'
-          sync_status="$(curl --silent --show-error --retry 2 --max-time 45 \
-            --output "$RUNNER_TEMP/sync-response.json" --write-out '%{http_code}' \
+          sync_response="$(curl --fail --silent --show-error --retry 2 --max-time 45 \
             --request POST \
             --header "Authorization: Bearer ${oidc_token}" \
             --header 'Content-Type: application/json' \
             --data-binary "@${RUNNER_TEMP}/lottery-latest.json" \
             "$SYNC_WORKER_URL")"
-          cat "$RUNNER_TEMP/sync-response.json"
-          if [ "$sync_status" -lt 200 ] || [ "$sync_status" -ge 300 ]; then
-            printf '\\nPreview sync returned HTTP %s\\n' "$sync_status"
-            exit 1
-          fi
-          printf '%s' "$(cat "$RUNNER_TEMP/sync-response.json")" | python3 -c 'import json,sys,os; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); results=data.get("results", []); expected={"dlt","pl3","pl5","qxc"} if os.environ.get("GITHUB_EVENT_NAME")=="push" else {"fc3d","ssq","qlc","kl8","dlt","pl3","pl5","qxc"}; relevant=[item for item in results if item.get("game") in expected]; games={item.get("game") for item in relevant}; states=[item.get("state") for item in relevant]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced"}; sys.exit(0 if data.get("ok") and games==expected and not bad.intersection(states) else 1)'
+          printf '%s' "$sync_response" | python3 -c 'import json,sys; data=json.load(sys.stdin); results=data.get("results", []); print(json.dumps(data, ensure_ascii=False)); games={item.get("game") for item in results}; states=[item.get("state") for item in results]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced", "waiting-for-confirmation"}; sys.exit(0 if data.get("ok") and len(games)==8 and not bad.intersection(states) else 1)'
 
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-            echo "Source-change run completed Preview validation; Production sync is intentionally skipped."
-            exit 0
-          fi
-
-          production_token_response="$(curl --fail --silent --show-error \
+  sync-production:
+    needs: collect-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: lottery-latest
+          path: ${{ runner.temp }}
+      - name: Request a GitHub OIDC token and sync the Production snapshot
+        env:
+          SYNC_WORKER_URL: https://caiyan-lottery-sync-production.cxu96175.workers.dev/sync
+        run: |
+          set -eu
+          token_response="$(curl --fail --silent --show-error \
             --header "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
             "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=caiyan-lottery-sync-production")"
-          production_oidc_token="$(printf '%s' "$production_token_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
-          production_status="$(curl --silent --show-error --retry 2 --max-time 45 \
-            --output "$RUNNER_TEMP/production-sync-response.json" --write-out '%{http_code}' \
+          oidc_token="$(printf '%s' "$token_response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          sync_response="$(curl --fail --silent --show-error --retry 2 --max-time 45 \
             --request POST \
-            --header "Authorization: Bearer ${production_oidc_token}" \
+            --header "Authorization: Bearer ${oidc_token}" \
             --header 'Content-Type: application/json' \
             --data-binary "@${RUNNER_TEMP}/lottery-latest.json" \
-            "https://caiyan-lottery-sync-production.cxu96175.workers.dev/sync")"
-          cat "$RUNNER_TEMP/production-sync-response.json"
-          if [ "$production_status" -lt 200 ] || [ "$production_status" -ge 300 ]; then
-            printf '\\nProduction sync returned HTTP %s\\n' "$production_status"
-            exit 1
-          fi
-          printf '%s' "$(cat "$RUNNER_TEMP/production-sync-response.json")" | python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps(data, ensure_ascii=False)); results=data.get("results", []); games={item.get("game") for item in results}; states=[item.get("state") for item in results]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced"}; expected={"fc3d","ssq","qlc","kl8","dlt","pl3","pl5","qxc"}; sys.exit(0 if data.get("ok") and games==expected and not bad.intersection(states) else 1)'
+            "$SYNC_WORKER_URL")"
+          printf '%s' "$sync_response" | python3 -c 'import json,sys; data=json.load(sys.stdin); results=data.get("results", []); print(json.dumps(data, ensure_ascii=False)); games={item.get("game") for item in results}; states=[item.get("state") for item in results]; bad={"error", "missing-or-invalid-submission", "empty", "upstream-not-advanced", "waiting-for-confirmation"}; sys.exit(0 if data.get("ok") and len(games)==8 and not bad.intersection(states) else 1)'

@@ -34,8 +34,8 @@ export async function saveLatestSnapshot(db, game, result, date = new Date()) {
   const record = result?.records?.[0]
   if (!record || !/^\d{4,8}$/.test(String(record.issue || '')) || !Array.isArray(record.numbers) || !record.numbers.length) return false
   const previous = await db.prepare('SELECT issue, checked_at, source_json FROM lottery_latest WHERE game = ?').bind(game).first()
-  // Mark the snapshot completed on the day it is verified, even when the
-  // collector catches up a draw published on the previous calendar day.
+  // A successful fetch of yesterday's issue is not today's completed draw.
+  // Keep the scheduler retrying until the source advances to today's result.
   const completedOn = result.verified && isCurrentDraw(record, date) ? shanghaiDate(date) : ''
   const source = {
     source: result.source,
@@ -73,11 +73,22 @@ export async function enrichLatestSnapshot(db, game, incoming, metadataSource, d
     || left.some((value, index) => Number(value) !== Number(right[index]))) return false
   const record = { ...current.record }
   let changed = false
+  // A prior release accepted Shanghai's regional 3D sales field as if it were
+  // nationwide. Correct only from the verified national Welfare Lottery API,
+  // and only after the issue and every winning digit have matched above.
+  const authoritativeNationalFc3d = game === 'fc3d' && metadataSource === 'official:www.cwl.gov.cn'
   for (const key of ['saleAmount', 'poolAmount']) {
-    if (record[key] == null && Number.isFinite(incoming[key]) && incoming[key] >= 0 && incoming[key] <= 1e12) {
+    const mayCorrectRegionalFc3dSales = key === 'saleAmount' && authoritativeNationalFc3d
+      && Number.isFinite(record[key]) && Number.isFinite(incoming[key]) && incoming[key] !== record[key]
+    if ((record[key] == null || mayCorrectRegionalFc3dSales)
+      && Number.isFinite(incoming[key]) && incoming[key] >= 0 && incoming[key] <= 1e12) {
       record[key] = incoming[key]
       changed = true
     }
+  }
+  if (authoritativeNationalFc3d && record.poolApplicable !== false) {
+    record.poolApplicable = false
+    changed = true
   }
   if (record.poolApplicable === undefined && typeof incoming.poolApplicable === 'boolean') {
     record.poolApplicable = incoming.poolApplicable
@@ -85,8 +96,17 @@ export async function enrichLatestSnapshot(db, game, incoming, metadataSource, d
   }
   if (record.firstPrize?.amount == null && Number.isFinite(incoming.firstPrize?.amount)
     && incoming.firstPrize.amount >= 0 && incoming.firstPrize.amount <= 1e10) {
-    record.firstPrize = { level: incoming.firstPrize.level || '一等奖', amount: incoming.firstPrize.amount }
+    record.firstPrize = { ...record.firstPrize, level: incoming.firstPrize.level || '一等奖', amount: incoming.firstPrize.amount }
     changed = true
+  }
+  if (incoming.firstPrize) {
+    record.firstPrize = { ...(record.firstPrize || { level: incoming.firstPrize.level || '一等奖' }) }
+    for (const key of ['count', 'provinces']) {
+      const value = incoming.firstPrize[key]
+      const valid = key === 'count' ? Number.isInteger(value) && value >= 0 && value <= 1e9
+        : typeof value === 'string' && value.trim().length > 0 && value.length <= 500
+      if (record.firstPrize[key] == null && valid) { record.firstPrize[key] = key === 'provinces' ? value.trim() : value; changed = true }
+    }
   }
   if (!changed) return false
   const source = { ...current.source, metadataSource: metadataSource || 'runner-supplement', metadataCheckedAt: date.toISOString() }

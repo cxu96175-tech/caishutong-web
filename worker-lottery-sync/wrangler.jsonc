@@ -3,6 +3,9 @@
   "name": "caiyan-lottery-sync-preview",
   "main": "./index.js",
   "compatibility_date": "2026-08-08",
+  "vars": {
+    "SYNC_AUDIENCE": "caiyan-lottery-sync-preview"
+  },
   "d1_databases": [
     {
       "binding": "DB",

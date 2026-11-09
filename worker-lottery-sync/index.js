@@ -17,7 +17,10 @@ const isExpectedDrawDay = (game, date) => {
 const DEFAULT_EXPECTED_AUDIENCE = 'caiyan-lottery-sync-preview'
 const EXPECTED_REPOSITORY = 'cxu96175-tech/caishutong-web'
 const EXPECTED_REF = 'refs/heads/main'
-const EXPECTED_WORKFLOW = `${EXPECTED_REPOSITORY}/.github/workflows/lottery-preview-sync.yml@${EXPECTED_REF}`
+const EXPECTED_WORKFLOWS = new Set([
+  `${EXPECTED_REPOSITORY}/.github/workflows/lottery-preview-sync.yml@${EXPECTED_REF}`,
+  `${EXPECTED_REPOSITORY}/.github/workflows/preview-sports-source-check.yml@${EXPECTED_REF}`
+])
 const EXPECTED_SUBJECTS = [
   `repo:${EXPECTED_REPOSITORY}:ref:${EXPECTED_REF}`,
   'repo:cxu96175-tech@310116318/caishutong-web@1324034095:ref:refs/heads/main'
@@ -90,7 +93,7 @@ async function verifyGithubOidc(request, expectedAudience = DEFAULT_EXPECTED_AUD
       && claims.repository === EXPECTED_REPOSITORY
       && claims.ref === EXPECTED_REF
       && isExpectedGithubSubject(claims.sub)
-      && claims.workflow_ref === EXPECTED_WORKFLOW
+      && EXPECTED_WORKFLOWS.has(claims.workflow_ref)
       && ['schedule', 'workflow_dispatch', 'push'].includes(claims.event_name)
       && Number.isFinite(claims.exp)
       && Number.isFinite(claims.nbf)
@@ -118,6 +121,13 @@ function validateSubmittedResult(item) {
   if (Number.isFinite(record.firstPrize?.amount) && record.firstPrize.amount >= 0 && record.firstPrize.amount <= 1e10) {
     safe.firstPrize = { level: '一等奖', amount: record.firstPrize.amount }
   }
+  const firstPrizeCount = Number(record.firstPrize?.count)
+  if (Number.isInteger(firstPrizeCount) && firstPrizeCount >= 0 && firstPrizeCount <= 1e9) {
+    safe.firstPrize = { ...(safe.firstPrize || { level: '一等奖' }), count: firstPrizeCount }
+  }
+  if (typeof record.firstPrize?.provinces === 'string' && record.firstPrize.provinces.trim().length <= 500) {
+    safe.firstPrize = { ...(safe.firstPrize || { level: '一等奖' }), provinces: record.firstPrize.provinces.trim() }
+  }
   return {
     records: [safe], verified: item.verified === true,
     source: String(item.source || 'runner').slice(0, 120),
@@ -135,101 +145,4 @@ export async function synchronize(env, checkedAt = new Date(), submitted = null,
   if (!manuallyTriggered && !scheduledTrigger && !inDrawWindow(checkedAt)) {
     return { ok: true, skipped: 'outside-draw-window' }
   }
-  if (!env?.DB) throw new Error('Lottery D1 binding is unavailable')
-
-  const today = shanghaiDate(checkedAt)
-  const supplied = new Map(Array.isArray(submitted?.results)
-    ? submitted.results.filter(item => GAMES.includes(item?.game)).map(item => [item.game, validateSubmittedResult(item)]) : [])
-  const results = await Promise.allSettled(GAMES.map(async game => {
-    const previous = await readLatestSnapshot(env.DB, game)
-    if (previous?.completedOn === today && !isCurrentDraw(previous.record, checkedAt)) {
-      await env.DB.prepare('UPDATE lottery_latest SET completed_on = ? WHERE game = ? AND issue = ?')
-        .bind('', game, String(previous.issue)).run()
-      previous.completedOn = ''
-    }
-    if (scheduledTrigger && !submitted && previous?.completedOn === today && isCurrentDraw(previous.record, checkedAt)) {
-      return { game, state: 'already-updated', issue: previous.issue }
-    }
-    const upstream = submitted ? supplied.get(game) : await fetchRealtimeRecords(game, 1)
-    if (!upstream) return { game, state: submitted ? 'missing-or-invalid-submission' : 'empty' }
-    const latest = upstream.records?.[0]
-    if (previous && latest && sameDrawIssue(game, previous.issue, latest.issue)) {
-      const enriched = await enrichLatestSnapshot(env.DB, game, latest, upstream.metadataSource || upstream.source, checkedAt)
-      if (previous.completedOn === today) return { game, state: enriched ? 'metadata-enriched' : 'already-updated' }
-    }
-    if (previous?.completedOn === today && (!latest || Number(latest.issue) <= Number(previous.issue))) {
-      return { game, state: 'already-updated' }
-    }
-
-    if (!latest) return { game, state: 'empty' }
-
-    const persisted = await saveLatestSnapshot(env.DB, game, upstream, checkedAt)
-    if (!persisted && previous && Number(latest.issue) <= Number(previous.issue)) {
-      return {
-        game,
-        state: isExpectedDrawDay(game, checkedAt) ? 'upstream-not-advanced' : 'no-new-draw',
-        issue: latest.issue,
-        previousIssue: previous.issue
-      }
-    }
-
-    const confirmed = Boolean(upstream.verified)
-    return { game, state: confirmed ? 'updated-and-stopped' : 'waiting-for-confirmation', issue: latest.issue }
-  }))
-
-  return {
-    ok: true,
-    checkedAt: checkedAt.toISOString(),
-    results: results.map(result => result.status === 'fulfilled'
-      ? result.value
-      : { state: 'error', error: result.reason instanceof Error ? result.reason.message : String(result.reason) })
-  }
-}
-
-export default {
-  async scheduled(controller, env, ctx) {
-    const checkedAt = new Date(controller?.scheduledTime || Date.now())
-    if (!inDrawWindow(checkedAt)) return { ok: true, skipped: 'outside-draw-window' }
-    const sync = synchronize(env, checkedAt, null, false, true)
-      .catch(error => {
-        console.error('scheduled lottery sync failed', error instanceof Error ? error.message : String(error))
-        throw error
-      })
-    ctx?.waitUntil?.(sync)
-    return sync
-  },
-
-  async fetch(request, env) {
-    const url = new URL(request.url)
-    if (url.pathname === '/health' && request.method === 'GET') {
-      return Response.json({ ok: true, service: 'lottery-sync', scheduler: 'cloudflare-cron+github-actions' })
-    }
-    if (url.pathname === '/sync') {
-      if (request.method !== 'POST') return Response.json({ error: 'Method Not Allowed' }, { status: 405 })
-      let authorized
-      try {
-        authorized = await verifyGithubOidc(request, env.SYNC_AUDIENCE || DEFAULT_EXPECTED_AUDIENCE)
-      } catch {
-        return Response.json({ error: 'Authentication service unavailable' }, { status: 503 })
-      }
-      if (!authorized) return Response.json({ error: 'Unauthorized' }, { status: 401 })
-      try {
-        const raw = await request.text()
-        if (raw.length > 32768) return Response.json({ error: 'Payload too large' }, { status: 413 })
-        const submitted = raw ? JSON.parse(raw) : null
-        return Response.json(await synchronize(
-          env,
-          new Date(),
-          submitted,
-          authorized === 'workflow_dispatch' || authorized === 'push',
-          authorized === 'schedule'
-        ))
-      } catch (error) {
-        console.error('lottery-sync run failed', error instanceof Error ? error.message : String(error))
-        return Response.json({ error: 'Lottery synchronization failed' }, { status: 500 })
-      }
-    }
-    return Response.json({ error: 'Not Found' }, { status: 404 })
-  },
-
-}
+  if (!env?.D
