@@ -91,7 +91,10 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
         const failed = results.filter(result => ['failed', 'unverified'].includes(result.status))
         const updated = results.filter(result => result.status === 'updated').length
         const cooling = results.some(result => result.status === 'cooldown')
-        if (failed.length) setRefreshMessage(`有 ${failed.length} 个彩种未能完成刷新，仍保留上次有效开奖。`)
+        if (failed.length) {
+          const details = failed.map(result => `${games[result.game]?.name || result.game}：${result.message || '未能从可信来源完成校验'}`).join('；')
+          setRefreshMessage(`有 ${failed.length} 个彩种未能完成刷新，仍保留上次有效开奖。${details}`)
+        }
         else if (cooling) setRefreshMessage('刷新请求刚刚已提交，请稍后再试。')
         else setRefreshMessage(updated ? `已更新 ${updated} 个彩种，其余彩种暂未发布新一期。` : '已检查所有彩种，暂未发现新一期。')
         if (!failed.length && !cooling) setStamp(new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }))
