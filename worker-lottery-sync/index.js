@@ -189,10 +189,17 @@ export async function synchronize(env, checkedAt = new Date(), submitted = null,
 export default {
   async scheduled(controller, env, ctx) {
     const checkedAt = new Date(controller?.scheduledTime || Date.now())
-    if (!inDrawWindow(checkedAt)) return { ok: true, skipped: 'outside-draw-window' }
+    const scheduledAt = checkedAt.toISOString()
+    if (!inDrawWindow(checkedAt)) {
+      console.warn(JSON.stringify({ event: 'lottery-scheduled-sync-skipped', scheduledAt, reason: 'outside-draw-window' }))
+      return { ok: true, scheduledAt, skipped: 'outside-draw-window' }
+    }
     const sync = synchronize(env, checkedAt, null, false, true)
-      .catch(error => {
-        console.error('scheduled lottery sync failed', error instanceof Error ? error.message : String(error))
+      .then(result => {
+        console.info(JSON.stringify({ event: 'lottery-scheduled-sync-finished', scheduledAt, checkedAt: result.checkedAt, results: result.results }))
+        return result
+      }).catch(error => {
+        console.error(JSON.stringify({ event: 'lottery-scheduled-sync-failed', scheduledAt, error: error instanceof Error ? error.message : String(error) }))
         throw error
       })
     ctx?.waitUntil?.(sync)
