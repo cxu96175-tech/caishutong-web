@@ -97,4 +97,80 @@ function normalizeRecord(game, x) {
   const first = x.firstPrize || (x.prizeRows || []).find(p => p.level === '一等奖')
   const prizeLabel = game === 'pl3' ? '直选单注' : '一等奖'
   const firstPrizeDetail = first?.count != null ? `${first.count}注` : '--'
-  return { ...x, id: `${game}-${x.issue}`, game, name: meta.name, icon: meta.icon, drawTime: meta.time, redBalls: balls.slice(0, meta.red), blueBalls: balls.slice(meta.red, meta.red + meta.blue), firstPrizeLabel: prizeLabel, firstPrizeText: first?.amount != null ? `单注${money(first.amount)}` : '--', firstPrizeCountText: firstPrizeDetail, saleAmountText: money(x.saleAmount), poolAmountText: x
+  return { ...x, id: `${game}-${x.issue}`, game, name: meta.name, icon: meta.icon, drawTime: meta.time, redBalls: balls.slice(0, meta.red), blueBalls: balls.slice(meta.red, meta.red + meta.blue), firstPrizeLabel: prizeLabel, firstPrizeText: first?.amount != null ? `单注${money(first.amount)}` : '--', firstPrizeCountText: firstPrizeDetail, saleAmountText: money(x.saleAmount), poolAmountText: x.poolApplicable === false || meta.poolApplicable === false ? '不适用' : money(x.poolAmount) }
+}
+
+async function fetchGameRecords(game, limit, { fresh = false } = {}) {
+  const freshness = fresh ? `&fresh=${Math.floor(Date.now() / 60000)}` : ''
+  // /api/lottery 使用前端彩种 key（fc3d/pl3/pl5/kl8），不要传给上游的
+  // fcsd/pls/plw/klb 代码，否则这四个彩种会被接口判定为不支持。
+  try {
+    const res = await fetchWithTimeout(`${API}/lottery?game=${encodeURIComponent(game)}&limit=${limit}&v=18${freshness}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const json = await res.json()
+    const records = (json.records || []).map(x => normalizeRecord(game, x))
+    if (!records.length) throw new Error('实时接口没有返回开奖记录')
+    records.refreshStatus = json.refreshStatus || 'read'
+    records.refreshError = json.refreshError || ''
+    return records
+  } catch (realtimeError) {
+    // 首页实时源不可达时，复用历史接口已经验证可用的开奖归档；
+    // 避免整块首页因为实时供应商短暂故障而显示空状态。
+    try {
+      if (!API.startsWith('/')) throw realtimeError
+      const records = await fetchHistory(game, { fresh })
+      if (!records.length) throw new Error('历史接口没有返回开奖记录')
+      records.refreshStatus = fresh ? 'failed' : 'read'
+      records.refreshError = fresh ? realtimeError.message : ''
+      return records.slice(0, limit)
+    } catch (archiveError) {
+      throw new Error(`实时开奖接口失败（${realtimeError.message}）；历史开奖兜底失败（${archiveError.message}）`)
+    }
+  }
+}
+
+function sortRecords(records) {
+  return [...records].sort((a, b) => Number(b.issue) - Number(a.issue))
+}
+
+export function mergeRecords(current, archive) {
+  const byIssue = new Map()
+  // 动态开奖接口优先，避免归档源的旧记录覆盖最新数据。
+  for (const record of [...current, ...archive]) {
+    if (record?.issue && !byIssue.has(String(record.issue))) byIssue.set(String(record.issue), record)
+  }
+  return sortRecords([...byIssue.values()])
+}
+
+export async function fetchRecords(limit = 50, onGameLoaded, { fresh = false, onRefreshStatus } = {}) {
+  const results = await Promise.allSettled(gameOrder.map(async game => {
+    const records = await fetchGameRecords(game, limit, { fresh })
+    onRefreshStatus?.({ game, status: records.refreshStatus || 'read', message: records.refreshError || '' })
+    if (records.length) onGameLoaded?.(records)
+    return records
+  }))
+  results.forEach((result, index) => {
+    if (result.status === 'rejected') onRefreshStatus?.({ game: gameOrder[index], status: 'failed', message: result.reason?.message || '' })
+  })
+  const all = results.flatMap(x => x.status === 'fulfilled' ? x.value : [])
+  if (!all.length) throw new Error('开奖数据暂时不可用')
+  return all
+}
+
+export async function fetchHistory(game, { fresh = false } = {}) {
+  const cached = historyCache.get(game)
+  if (!fresh && cached && Date.now() - cached.savedAt < historyCacheLifetime) return cached.promise
+  const request = (async () => {
+    // 历史页、走势图和详情统一读取服务端合并后的标准数据；官方源优先，
+    // 归档只补旧期，避免各页面分别竞争不同数据源造成期号不一致。
+    const freshness = fresh ? `&fresh=${Math.floor(Date.now() / 60000)}` : ''
+    const res = await fetchWithTimeout(`/api/history?game=${encodeURIComponent(game)}&v=2${freshness}`, 30000)
+    if (!res.ok) throw new Error(`历史接口 HTTP ${res.status}`)
+    const json = await res.json()
+    const records = (json.records || []).map(x => normalizeRecord(game, x))
+    if (!records.length) throw new Error('历史开奖数据为空')
+    return records
+  })()
+  historyCache.set(game, { promise: request, savedAt: Date.now() })
+  try { return await request } catch (error) { historyCache.delete(game); throw error }
+}

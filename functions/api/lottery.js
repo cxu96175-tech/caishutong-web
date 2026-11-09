@@ -128,4 +128,12 @@ export async function onRequestGet({ request, waitUntil, env }) {
       }
     })
     if (cache && waitUntil) waitUntil(cache.put(cacheKey, response.clone()).catch(() => {}))
-    ret
+    return response
+  } catch (error) {
+    if (forceRefresh && previousSnapshot) return snapshotPayload(game, previousSnapshot, 'failed', error instanceof Error ? error.message : '上游采集失败')
+    return Response.json({ ok: false, error: '开奖数据暂时不可用', detail: error instanceof Error ? error.message : String(error), game }, {
+      status: 502,
+      headers: { 'Cache-Control': 'no-store, max-age=0', 'X-Content-Type-Options': 'nosniff' }
+    })
+  }
+}

@@ -129,4 +129,62 @@ async function collect(game) {
         return { ...officialNotice, record, ...(metadataSource ? { metadataSource } : {}) }
       }
     } catch (error) {
-      console.warn(`双色球官方公告
+      console.warn(`双色球官方公告回退失败：${errorText(error)}`)
+    }
+  }
+  const [official, publicDetail, mirror] = await Promise.allSettled([
+    fetchOfficial(game, 1),
+    fetchProxy(game, 1),
+    mirrorPromise
+  ])
+  const officialResult = official.status === 'fulfilled' ? official.value : null
+  const publicResult = publicDetail.status === 'fulfilled' ? publicDetail.value : null
+  const mirrorResult = mirror.status === 'fulfilled' ? mirror.value.records?.[game] : null
+  const mirrorIssue = Number(mirrorResult?.record?.issue || 0)
+  const officialIssue = Number(officialResult?.records?.[0]?.issue || 0)
+  const publicIssue = Number(publicResult?.records?.[0]?.issue || 0)
+  const primary = officialResult && publicResult && publicIssue > officialIssue
+    && !sameIssue(game, officialIssue, publicIssue) ? publicResult : officialResult || publicResult
+  const newestMirror = mirrorResult && (!primary || (mirrorIssue > Number(primary.records?.[0]?.issue || 0)
+    && !sameIssue(game, primary.records?.[0]?.issue, mirrorResult.record.issue))) ? mirrorResult : null
+  const chosen = primary || newestMirror
+  if (!chosen) return {
+    game,
+    error: '没有可用的最新期开奖',
+    sourceErrors: {
+      official: official.status === 'rejected' ? errorText(official.reason) : '接口未返回有效记录',
+      fallback: publicDetail.status === 'rejected' ? errorText(publicDetail.reason) : '接口未返回有效记录',
+      mirror: mirrorResult ? '镜像无可用记录' : (mirror.status === 'rejected' ? errorText(mirror.reason) : mirrorResult?.error || mirror.value?.error || '镜像未返回有效记录')
+    }
+  }
+
+  const record = { ...(chosen.record || chosen.records[0]) }
+  let metadataSource = chosen === newestMirror ? chosen.metadataSource : null
+  const supplements = [
+    ...(primary === officialResult && publicResult ? [publicResult] : []),
+    ...(mirrorResult && !newestMirror ? [mirrorResult] : [])
+  ]
+  for (const supplementResult of supplements) {
+    const supplement = supplementResult.record || supplementResult.records?.[0]
+    if (supplement && sameIssue(game, record.issue, supplement.issue)
+      && sameNumbers(record.numbers, supplement.numbers)) {
+      Object.assign(record, mergeMissingDrawMetadata(record, supplement))
+      metadataSource = supplementResult.metadataSource || supplementResult.source
+    }
+  }
+  return {
+    game, record, verified: chosen === primary && primary === officialResult,
+    source: chosen.source, sourceName: chosen.sourceName,
+    sourceType: chosen.sourceType, sourceUrl: chosen.sourceUrl,
+    ...(chosen === newestMirror ? { metadataSource: chosen.metadataSource } : {}),
+    metadataSource
+  }
+}
+
+const results = await Promise.all(games.map(collect))
+if (!results.some(result => result.record)) {
+  console.error(JSON.stringify({ error: '所有彩种的最新开奖采集均失败', results }, null, 2))
+  process.exitCode = 1
+} else {
+  process.stdout.write(JSON.stringify({ collectedAt: new Date().toISOString(), results }))
+}

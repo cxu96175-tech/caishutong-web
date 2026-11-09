@@ -145,4 +145,114 @@ export async function synchronize(env, checkedAt = new Date(), submitted = null,
   if (!manuallyTriggered && !scheduledTrigger && !inDrawWindow(checkedAt)) {
     return { ok: true, skipped: 'outside-draw-window' }
   }
-  if (!env?.D
+  if (!env?.DB) throw new Error('Lottery D1 binding is unavailable')
+
+  const today = shanghaiDate(checkedAt)
+  const supplied = new Map(Array.isArray(submitted?.results)
+    ? submitted.results.filter(item => GAMES.includes(item?.game)).map(item => [item.game, validateSubmittedResult(item)]) : [])
+  const results = await Promise.allSettled(GAMES.map(async game => {
+    const previous = await readLatestSnapshot(env.DB, game)
+    // Older worker versions could mark any verified snapshot as completed
+    // today, even when its draw date was yesterday. Expire that stale marker
+    // in-place so it cannot suppress today's scheduled retries.
+    if (previous?.completedOn === today && !isCurrentDraw(previous.record, checkedAt)) {
+      await env.DB.prepare('UPDATE lottery_latest SET completed_on = ? WHERE game = ? AND issue = ?')
+        .bind('', game, String(previous.issue)).run()
+      previous.completedOn = ''
+    }
+    // Stop polling a game after today's verified result is already stored.
+    if (scheduledTrigger && !submitted && previous?.completedOn === today && isCurrentDraw(previous.record, checkedAt)) {
+      return { game, state: 'already-updated', issue: previous.issue }
+    }
+    const upstream = submitted ? supplied.get(game) : await fetchRealtimeRecords(game, 1)
+    if (!upstream) return { game, state: submitted ? 'missing-or-invalid-submission' : 'empty' }
+    const sourceDetails = {
+      ...(upstream.source ? { source: upstream.source } : {}),
+      ...(upstream.sourceName ? { sourceName: upstream.sourceName } : {}),
+      ...(upstream.fallback ? { fallback: true } : {}),
+      ...(upstream.verified === true ? { verified: true } : {})
+    }
+    const latest = upstream.records?.[0]
+    // A third-party/unverified candidate must never replace the last confirmed draw.
+    // Leave it untouched and let the next scheduled check retry official confirmation.
+    if (upstream.verified !== true) {
+      return { game, state: 'waiting-for-confirmation', issue: latest?.issue || null, previousIssue: previous?.issue || null, ...sourceDetails }
+    }
+    if (previous && latest && sameDrawIssue(game, previous.issue, latest.issue)) {
+      const enriched = await enrichLatestSnapshot(env.DB, game, latest, upstream.metadataSource || upstream.source, checkedAt)
+      if (enriched) return { game, state: 'metadata-enriched', ...sourceDetails }
+      if (previous.completedOn === today) return { game, state: 'already-updated', ...sourceDetails }
+    }
+    if (previous?.completedOn === today && (!latest || Number(latest.issue) <= Number(previous.issue))) {
+      return { game, state: 'already-updated', ...sourceDetails }
+    }
+
+    if (!latest) return { game, state: 'empty' }
+
+    const persisted = await saveLatestSnapshot(env.DB, game, upstream, checkedAt)
+    if (!persisted && previous && Number(latest.issue) <= Number(previous.issue)) {
+      return {
+        game,
+        state: isExpectedDrawDay(game, checkedAt) ? 'upstream-not-advanced' : 'no-new-draw',
+        issue: latest.issue,
+        previousIssue: previous.issue,
+        ...sourceDetails
+      }
+    }
+
+    const confirmed = Boolean(upstream.verified)
+    return { game, state: confirmed ? 'updated-and-stopped' : 'waiting-for-confirmation', issue: latest.issue, ...sourceDetails }
+  }))
+
+  return {
+    ok: true,
+    checkedAt: checkedAt.toISOString(),
+    results: results.map(result => result.status === 'fulfilled'
+      ? result.value
+      : { state: 'error', error: result.reason instanceof Error ? result.reason.message : String(result.reason) })
+  }
+}
+
+export default {
+  async scheduled(controller, env, ctx) {
+    const checkedAt = new Date(controller?.scheduledTime || Date.now())
+    if (!inDrawWindow(checkedAt)) return { ok: true, skipped: 'outside-draw-window' }
+    const sync = synchronize(env, checkedAt, null, false, true)
+    ctx?.waitUntil?.(sync)
+    return sync
+  },
+
+  async fetch(request, env) {
+    const url = new URL(request.url)
+    if (url.pathname === '/health' && request.method === 'GET') {
+      return Response.json({ ok: true, service: 'lottery-sync', scheduler: 'cloudflare-cron+github-actions' })
+    }
+    if (url.pathname === '/sync') {
+      if (request.method !== 'POST') return Response.json({ error: 'Method Not Allowed' }, { status: 405 })
+      let authorized
+      try {
+        authorized = await verifyGithubOidc(request, env.SYNC_AUDIENCE || DEFAULT_EXPECTED_AUDIENCE)
+      } catch {
+        return Response.json({ error: 'Authentication service unavailable' }, { status: 503 })
+      }
+      if (!authorized) return Response.json({ error: 'Unauthorized' }, { status: 401 })
+      try {
+        const raw = await request.text()
+        if (raw.length > 32768) return Response.json({ error: 'Payload too large' }, { status: 413 })
+        const submitted = raw ? JSON.parse(raw) : null
+        return Response.json(await synchronize(
+          env,
+          new Date(),
+          submitted,
+          authorized === 'workflow_dispatch' || authorized === 'push',
+          authorized === 'schedule'
+        ))
+      } catch (error) {
+        console.error('lottery-sync run failed', error instanceof Error ? error.message : String(error))
+        return Response.json({ error: 'Lottery synchronization failed' }, { status: 500 })
+      }
+    }
+    return Response.json({ error: 'Not Found' }, { status: 404 })
+  },
+
+}
