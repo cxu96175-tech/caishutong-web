@@ -2,10 +2,9 @@ name: Lottery snapshot sync
 
 on:
   schedule:
-    # GitHub schedules use UTC; these runs cover 20:48–23:28 Asia/Shanghai.
-    - cron: '48,53,58 12 * * *'
-    - cron: '3-58/5 13,14 * * *'
-    - cron: '3-28/5 15 * * *'
+    # GitHub schedules use UTC (UTC+8 = Asia/Shanghai): check 21:00–22:30 every 5 minutes.
+    - cron: '0-55/5 13 * * *'
+    - cron: '0-30/5 14 * * *'
   workflow_dispatch:
 
 permissions:
