@@ -4,7 +4,10 @@
   "main": "./index.js",
   "compatibility_date": "2026-08-08",
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": [
+      "0-55/5 13 * * *",
+      "0-30/5 14 * * *"
+    ]
   },
   "vars": {
     "SYNC_AUDIENCE": "caiyan-lottery-sync-production"

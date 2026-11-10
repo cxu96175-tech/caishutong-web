@@ -260,23 +260,6 @@ export function parseOfficialSportsHistoryHtml(html, game) {
   return sortUnique(records)
 }
 
-export function parseShanghaiFc3dHistoryHtml(html) {
-  const rows = String(html || '').match(/<tr\b[\s\S]*?<\/tr>/gi) || []
-  const records = []
-  for (const row of rows) {
-    const cells = (row.match(/<td\b[\s\S]*?<\/td>/gi) || []).map(stripHtml)
-    const issue = cells[0]?.match(/\b(20\d{5})\b/)?.[1]
-    const drawDate = cells[1]?.match(/(20\d{2}-\d{2}-\d{2})/)?.[1]
-    const numbers = (row.match(/<i\b[^>]*>\s*([0-9])\s*<\/i>/gi) || [])
-      .map(ball => Number(ball.match(/<i\b[^>]*>\s*([0-9])\s*<\/i>/i)?.[1]))
-    if (!issue || !drawDate || numbers.length !== 3) continue
-    // This is an official regional history page: its sales and prize counts are
-    // Shanghai-only. Use it to confirm the nationwide draw number, not metadata.
-    records.push({ issue, drawDate, numbers })
-  }
-  return sortUnique(records.filter(record => validateRecord(record, 'fc3d')))
-}
-
 function moneyTextValue(value) {
   const normalized = stripHtml(value).replace(/[\s,，￥¥]/g, '')
   const match = normalized.match(/([0-9]+(?:\.[0-9]+)?)\s*(亿元|万元|元)?/)
@@ -431,30 +414,6 @@ export async function fetchOfficial(game, limit) {
     return { records, source: `official:${new URL(url).hostname}`, sourceName: `${LOTTERY_SOURCES[game].official.authority}官方接口`, sourceUrl: String(url), sourceType: 'official', fallback: false, verified: true }
   } catch (error) {
     primaryError = error instanceof Error ? error.message : String(error)
-  }
-  if (game === 'fc3d') {
-    const historyUrl = 'https://www.swlc.net.cn/lottery/3d.html?view=previous'
-    try {
-      const html = await fetchText(historyUrl, { headers: {
-        Accept: 'text/html,application/xhtml+xml',
-        'Accept-Language': 'zh-CN,zh;q=0.9',
-        'Cache-Control': 'no-cache',
-        'User-Agent': 'Mozilla/5.0 (compatible; LotteryNotice/1.0)'
-      } }, 10000)
-      const records = parseShanghaiFc3dHistoryHtml(html).slice(0, limit)
-      if (!records.length) throw new Error('上海福彩官方历史页未解析到有效开奖记录')
-      return {
-        records,
-        source: 'official:www.swlc.net.cn',
-        sourceName: '上海市福利彩票发行中心官方开奖公告（仅核验号码；销量不作全国值）',
-        sourceUrl: historyUrl,
-        sourceType: 'official', fallback: true, verified: true,
-        fallbackReason: `中国福彩网全国接口暂不可用：${primaryError}`
-      }
-    } catch (error) {
-      const regionalError = error instanceof Error ? error.message : String(error)
-      throw new Error(`中国福彩网接口失败：${primaryError}；上海福彩官方历史页失败：${regionalError}`)
-    }
   }
   const regional = LOTTERY_SOURCES[game].regionalOfficial
   if (regional) {
