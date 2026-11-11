@@ -22,7 +22,9 @@ export function readRecordsCache() {
   try {
     const cached = JSON.parse(localStorage.getItem(recordsCacheKey) || 'null')
     if (!cached?.records?.length || Date.now() - Number(cached.savedAt || 0) > recordsCacheLifetime) return null
-    return cached
+    return { ...cached, records: cached.records
+      .filter(record => games[record?.game])
+      .map(record => normalizeRecord(record.game, record)) }
   } catch { return null }
 }
 
@@ -91,13 +93,15 @@ async function fetchWithTimeout(url, timeout = 10000) {
 
 function normalizeRecord(game, x) {
   const meta = games[game]
+  const issue = ['dlt', 'pl3', 'pl5', 'qxc'].includes(game) && /^20\d{5}$/.test(String(x.issue || ''))
+    ? String(x.issue).slice(2) : String(x.issue || '')
   const balls = (Array.isArray(x.numbers) ? x.numbers : String(x.numbers || '').split(/[\s,，+|]+/))
     .filter(value => value !== '' && value !== null && value !== undefined)
     .map(v => meta.single ? String(+v) : String(v).padStart(2, '0'))
   const first = x.firstPrize || (x.prizeRows || []).find(p => p.level === '一等奖')
   const prizeLabel = game === 'pl3' ? '直选单注' : '一等奖'
   const firstPrizeDetail = first?.count != null ? `${first.count}注` : '--'
-  return { ...x, id: `${game}-${x.issue}`, game, name: meta.name, icon: meta.icon, drawTime: meta.time, redBalls: balls.slice(0, meta.red), blueBalls: balls.slice(meta.red, meta.red + meta.blue), firstPrizeLabel: prizeLabel, firstPrizeText: first?.amount != null ? `单注${money(first.amount)}` : '--', firstPrizeCountText: firstPrizeDetail, saleAmountText: money(x.saleAmount), poolAmountText: x.poolApplicable === false || meta.poolApplicable === false ? '不适用' : money(x.poolAmount) }
+  return { ...x, issue, id: `${game}-${issue}`, game, name: meta.name, icon: meta.icon, drawTime: meta.time, redBalls: balls.slice(0, meta.red), blueBalls: balls.slice(meta.red, meta.red + meta.blue), firstPrizeLabel: prizeLabel, firstPrizeText: first?.amount != null ? `单注${money(first.amount)}` : '--', firstPrizeCountText: firstPrizeDetail, saleAmountText: money(x.saleAmount), poolAmountText: x.poolApplicable === false || meta.poolApplicable === false ? '不适用' : money(x.poolAmount) }
 }
 
 async function fetchGameRecords(game, limit, { fresh = false } = {}) {
@@ -112,6 +116,21 @@ async function fetchGameRecords(game, limit, { fresh = false } = {}) {
     if (!records.length) throw new Error('实时接口没有返回开奖记录')
     records.refreshStatus = json.refreshStatus || 'read'
     records.refreshError = json.refreshError || ''
+    // Compare the latest snapshot with the same archive used by Detail and Trend.
+    // Keep the verified snapshot when the archive is unavailable or has no newer issue.
+    if (limit === 1 && API.startsWith('/')) {
+      try {
+        const archiveResponse = await fetchWithTimeout(`/api/history?game=${encodeURIComponent(game)}&limit=1&v=2${freshness}`, 30000)
+        if (!archiveResponse.ok) throw new Error(`历史接口 HTTP ${archiveResponse.status}`)
+        const archivedLatest = (await archiveResponse.json()).records?.[0]
+        if (archivedLatest && Number(archivedLatest.issue) > Number(records[0].issue)) {
+          const fallback = [normalizeRecord(game, archivedLatest)]
+          fallback.refreshStatus = 'updated'
+          fallback.refreshError = ''
+          return fallback
+        }
+      } catch { /* Keep the last verified snapshot when history cannot be checked. */ }
+    }
     return records
   } catch (realtimeError) {
     // 首页实时源不可达时，复用历史接口已经验证可用的开奖归档；
@@ -137,7 +156,26 @@ export function mergeRecords(current, archive) {
   const byIssue = new Map()
   // 动态开奖接口优先，避免归档源的旧记录覆盖最新数据。
   for (const record of [...current, ...archive]) {
-    if (record?.issue && !byIssue.has(String(record.issue))) byIssue.set(String(record.issue), record)
+    if (!record?.issue) continue
+    const key = String(record.issue)
+    const previous = byIssue.get(key)
+    if (!previous) { byIssue.set(key, record); continue }
+    // 仅在期号和每个奖号都相同时补全缺失字段，避免历史归档的空数据覆盖详情。
+    const sameBalls = previous.game === record.game
+      && JSON.stringify(previous.redBalls) === JSON.stringify(record.redBalls)
+      && JSON.stringify(previous.blueBalls) === JSON.stringify(record.blueBalls)
+    if (!sameBalls) continue
+    const merged = { ...previous }
+    for (const field of ['saleAmount', 'poolAmount', 'poolApplicable']) {
+      if (merged[field] == null && record[field] != null) merged[field] = record[field]
+    }
+    if (record.firstPrize) {
+      merged.firstPrize = { ...record.firstPrize, ...previous.firstPrize }
+      for (const field of ['amount', 'count', 'provinces']) {
+        if (merged.firstPrize[field] == null && record.firstPrize[field] != null) merged.firstPrize[field] = record.firstPrize[field]
+      }
+    }
+    byIssue.set(key, normalizeRecord(record.game, merged))
   }
   return sortRecords([...byIssue.values()])
 }

@@ -1,4 +1,6 @@
-import { parseOfficialWelfareNoticeHtml } from './ssqNotice.js'
+import { parseOfficialFc3dNoticeHtml, parseOfficialWelfareNoticeHtml } from './ssqNotice.js'
+
+export const parseShanghaiFc3dHistoryHtml = parseOfficialFc3dNoticeHtml
 
 const PROXY_ENDPOINT = 'https://lottery-official-data.cxu96175.workers.dev/lottery'
 const SWLC_PAGES = Object.freeze({ fc3d: '3d', ssq: 'ssq', qlc: 'qlc', kl8: 'kl8' })
@@ -124,7 +126,7 @@ function canonicalIssue(value, game) {
   const issue = normalizeIssue(value)
   // 体彩公告及部分归档源用 26102，公开页面可能写成 2026102；
   // 统一为体彩接口使用的 5 位期号，避免历史合并产生重复行。
-  return (game === 'dlt' || game === 'qxc') && /^20\d{5}$/.test(issue) ? issue.slice(2) : issue
+  return ['dlt', 'pl3', 'pl5', 'qxc'].includes(game) && /^20\d{5}$/.test(issue) ? issue.slice(2) : issue
 }
 
 function drawDate(row) {
@@ -381,10 +383,62 @@ async function fetchText(url, options = {}, timeout = 8000) {
   } finally { clearTimeout(timer) }
 }
 
+async function enrichSportsNotice(game, record, listingHtml) {
+  const row = (String(listingHtml).match(/<tr\b[\s\S]*?<\/tr>/gi) || [])
+    .find(value => value.includes(String(record.issue)) && /详细/.test(value))
+  const path = row?.match(/href=["'](\/cms\/post-\d+\.html)["']/i)?.[1]
+  if (!path) return record
+  const notice = await fetchText(`https://api.js-lottery.com${path}`, { headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0' } }, 8000)
+  if (!notice.includes(`第${record.issue}期开奖公告`)) return record
+  const start = notice.indexOf('本期开奖号码：')
+  let end = notice.indexOf('本期中奖情况', start)
+  if (end < 0) end = notice.indexOf('</p>', start)
+  if (start < 0 || end < 0) return record
+  const numbers = (stripHtml(notice.slice(start, end)).match(/\d{1,2}/g) || []).map(Number)
+  if (numbers.length !== record.numbers.length || numbers.some((value, index) => value !== Number(record.numbers[index]))) return record
+  const text = stripHtml(notice)
+  const number = value => Number(value.replace(/,/g, ''))
+  const sale = text.match(/本期全国销售金额[：:]\s*([\d,]+)元/)
+  const pool = text.match(/([\d,]+(?:\.\d+)?)元奖金滚入下期奖池/)
+  const prize = text.match(game === 'pl3' ? /直选\s*([\d,]+)注\s*[\d,]+注\s*([\d,]+)元/ : /一等奖\s*(?:基本\s*)?([\d,]+)注\s*(?:([\d,]+)元|---)/)
+  return { ...record,
+    ...(sale ? { saleAmount: number(sale[1]) } : {}),
+    ...(pool ? { poolAmount: number(pool[1]) } : {}),
+    ...(prize ? { firstPrize: { level: game === 'pl3' ? '直选' : '一等奖', count: number(prize[1]), ...(prize[2] ? { amount: number(prize[2]) } : {}) } } : {})
+  }
+}
+
+async function enrichNationalFc3d(record) {
+  const url = new URL('https://jc.zhcw.com/port/client_json.php')
+  for (const [key, value] of Object.entries({ transactionType: '10001001', lotteryId: '2', issueCount: '30', type: '0', pageNum: '1', pageSize: '1', callback: 'lotteryData' })) url.searchParams.set(key, value)
+  const raw = await fetchText(url, { headers: { Accept: 'text/javascript', Referer: 'https://www.zhcw.com/kjxx/3d/', 'User-Agent': 'Mozilla/5.0' } }, 8000)
+  const match = raw.match(/^lotteryData\((\{[\s\S]*\})\)\s*;?\s*$/)
+  if (!match) return record
+  const payload = JSON.parse(match[1])
+  const latest = payload?.resCode === '000000' && Array.isArray(payload.data) ? payload.data[0] : null
+  const numbers = String(latest?.frontWinningNum || '').trim().split(/\s+/).map(Number)
+  if (String(latest?.issue) !== String(record.issue) || numbers.length !== 3
+    || numbers.some((value, index) => value !== record.numbers[index])) return record
+  const sale = numericValue(latest.saleMoney)
+  return sale !== undefined && sale >= 0 ? { ...record, saleAmount: sale } : record
+}
+
 export async function fetchOfficial(game, limit) {
   const url = buildOfficialUrl(game, limit)
-  // 福彩3D在上海福彩地方页面返回的是上海地区销量，不是全国总销量；
-  // 该彩种应优先读取中国福彩网接口中的全国销售额字段。
+  // 上海公告只用于确认 3D 奖号；其销量属于上海地区，不能当作全国销量。
+  if (game === 'fc3d') {
+    try {
+      const pageUrl = 'https://www.swlc.net.cn/lottery/3d.html?limit=100&view=previous'
+      const html = await fetchText(pageUrl, { headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0' } })
+      const records = parseOfficialFc3dNoticeHtml(html).slice(0, limit)
+      if (records.length) {
+        records[0] = { ...records[0], poolApplicable: false }
+        try { records[0] = await enrichNationalFc3d(records[0]) } catch { /* 保留官方核实的奖号。 */ }
+        return { records, source: 'official:www.swlc.net.cn', sourceName: '上海市福利彩票发行中心官方开奖公告', sourceUrl: pageUrl, sourceType: 'official', fallback: false, verified: true,
+          ...(records[0].saleAmount != null ? { metadataSource: 'zhcw.com:全国销量' } : {}) }
+      }
+    } catch { /* 上海公告不可用时继续尝试中国福彩网接口。 */ }
+  }
   if (SWLC_PAGES[game] && game !== 'fc3d') {
     const pageUrl = new URL(`https://www.swlc.net.cn/lottery/${SWLC_PAGES[game]}.html`)
     pageUrl.searchParams.set('limit', String(Math.min(100, Math.max(10, limit))))
@@ -411,6 +465,13 @@ export async function fetchOfficial(game, limit) {
     const payload = await fetchJson(url, { headers: { Accept: 'application/json, text/plain, */*', 'Accept-Language': 'zh-CN,zh;q=0.9', 'Cache-Control': 'no-cache', Referer: LOTTERY_SOURCES[game].official.site, 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131 Safari/537.36' } })
     const records = sortUnique(parseOfficialRows(payload, game)).slice(0, limit)
     if (!records.length) throw new Error('官方接口没有返回有效开奖记录')
+    if (LOTTERY_SOURCES[game].regionalOfficial && records[0].saleAmount == null) {
+      try {
+        const listingUrl = game === 'qxc' ? 'https://api.js-lottery.com/wfzq/sevenstar/data' : LOTTERY_SOURCES[game].regionalOfficial.endpoint
+        const listing = await fetchText(listingUrl, { headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0' } }, 8000)
+        records[0] = await enrichSportsNotice(game, records[0], listing)
+      } catch { /* Keep the official draw if the supplementary notice is unavailable. */ }
+    }
     return { records, source: `official:${new URL(url).hostname}`, sourceName: `${LOTTERY_SOURCES[game].official.authority}官方接口`, sourceUrl: String(url), sourceType: 'official', fallback: false, verified: true }
   } catch (error) {
     primaryError = error instanceof Error ? error.message : String(error)
@@ -426,6 +487,10 @@ export async function fetchOfficial(game, limit) {
       } }, 10000)
       const records = parseOfficialSportsHistoryHtml(html, game).slice(0, limit)
       if (!records.length) throw new Error('官方历史页未解析到有效开奖记录')
+      try {
+        const listing = game === 'qxc' ? await fetchText('https://api.js-lottery.com/wfzq/sevenstar/data', { headers: { Accept: 'text/html', 'User-Agent': 'Mozilla/5.0' } }, 8000) : html
+        records[0] = await enrichSportsNotice(game, records[0], listing)
+      } catch { /* Keep verified draw numbers when the notice is unavailable. */ }
       return {
         records,
         source: `official:${new URL(regional.endpoint).hostname}`,

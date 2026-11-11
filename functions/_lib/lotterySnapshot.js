@@ -73,10 +73,10 @@ export async function enrichLatestSnapshot(db, game, incoming, metadataSource, d
     || left.some((value, index) => Number(value) !== Number(right[index]))) return false
   const record = { ...current.record }
   let changed = false
-  // A prior release accepted Shanghai's regional 3D sales field as if it were
-  // nationwide. Correct only from the verified national Welfare Lottery API,
-  // and only after the issue and every winning digit have matched above.
-  const authoritativeNationalFc3d = game === 'fc3d' && metadataSource === 'official:www.cwl.gov.cn'
+  // A prior release accepted Shanghai's regional 3D sales field as nationwide.
+  // Correct only from a national source checked against the exact issue and digits.
+  const authoritativeNationalFc3d = game === 'fc3d'
+    && ['official:www.cwl.gov.cn', 'zhcw.com:全国销量'].includes(metadataSource)
   for (const key of ['saleAmount', 'poolAmount']) {
     const mayCorrectRegionalFc3dSales = key === 'saleAmount' && authoritativeNationalFc3d
       && Number.isFinite(record[key]) && Number.isFinite(incoming[key]) && incoming[key] !== record[key]

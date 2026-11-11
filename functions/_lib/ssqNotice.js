@@ -22,6 +22,20 @@ export function parseOfficialSsqNoticeHtml(html) {
   return null
 }
 
+export function parseOfficialFc3dNoticeHtml(html) {
+  const records = []
+  for (const [, row] of String(html).matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const cells = [...row.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map(([, cell]) => cell)
+    const issue = cleanCell(cells[0] || '').match(/(20\d{5})/)?.[1]
+    const drawDate = cleanCell(cells[1] || '').match(/(20\d{2}-\d{2}-\d{2})/)?.[1]
+    const numbers = [...(cells[2] || '').matchAll(/<i\b[^>]*>([\s\S]*?)<\/i>/gi)].map(([, value]) => Number(cleanCell(value)))
+    if (issue && drawDate && numbers.length === 3 && numbers.every(number => Number.isInteger(number) && number >= 0 && number <= 9)) {
+      records.push({ issue, drawDate, numbers })
+    }
+  }
+  return records.sort((left, right) => Number(right.issue) - Number(left.issue))
+}
+
 const welfareTableConfig = Object.freeze({
   ssq: { count: 7, ranges: [...Array.from({ length: 6 }, () => [1, 33]), [1, 16]], saleIndex: 4, firstPrizeCountIndex: 5, firstPrizeAmountIndex: 6, poolIndex: 7 },
   qlc: { count: 8, ranges: [...Array.from({ length: 8 }, () => [1, 30])], saleIndex: 4, firstPrizeCountIndex: 5, firstPrizeAmountIndex: 6, poolIndex: 11 },

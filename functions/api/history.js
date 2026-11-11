@@ -1,4 +1,5 @@
-import { fetchRealtimeRecords, sourceSummary, LOTTERY_SOURCES } from '../_lib/lotterySources.js'
+import { fetchRealtimeRecords, mergeMissingDrawMetadata, sourceSummary, LOTTERY_SOURCES } from '../_lib/lotterySources.js'
+import { readLatestSnapshot, sameDrawIssue } from '../_lib/lotterySnapshot.js'
 
 const ARCHIVE_BASE = 'https://data.17500.cn/'
 const ARCHIVES = {
@@ -14,7 +15,7 @@ const ARCHIVES = {
 
 function canonicalIssue(game, value) {
   const issue = String(value || '')
-  return (game === 'dlt' || game === 'qxc') && /^20\d{5}$/.test(issue) ? issue.slice(2) : issue
+  return ['dlt', 'pl3', 'pl5', 'qxc'].includes(game) && /^20\d{5}$/.test(issue) ? issue.slice(2) : issue
 }
 
 function parseArchive(text, game, count) {
@@ -59,9 +60,10 @@ async function fetchArchive(game) {
   return { records, source: `third-party-archive:${new URL(url).hostname}`, sourceUrl: url, sourceName: '17500.cn 历史归档' }
 }
 
-export async function onRequestGet({ request }) {
+export async function onRequestGet({ request, env }) {
   const incoming = new URL(request.url)
   const game = incoming.searchParams.get('game') || ''
+  const latestOnly = incoming.searchParams.get('limit') === '1'
   if (!LOTTERY_SOURCES[game] || !ARCHIVES[game]) return Response.json({ error: '不支持的彩种' }, { status: 400 })
 
   // 实时源与历史归档并行请求，但最终选择严格按可信度排序，不按返回速度抢占。
@@ -78,12 +80,25 @@ export async function onRequestGet({ request }) {
   const records = mergeRecords(current, archive.records)
   if (!records.length) return Response.json({ error: '历史开奖数据为空' }, { status: 502 })
 
-  const primary = realtime || { source: archive.source, sourceUrl: archive.sourceUrl, sourceName: archive.sourceName, sourceType: 'third-party-archive', fallback: true, verified: false, stale: true, checkedAt: new Date().toISOString() }
+  let primary = realtime || { source: archive.source, sourceUrl: archive.sourceUrl, sourceName: archive.sourceName, sourceType: 'third-party-archive', fallback: true, verified: false, stale: true, checkedAt: new Date().toISOString() }
+  if (env?.DB) {
+    try {
+      const snapshot = await readLatestSnapshot(env.DB, game)
+      const latest = records[0]
+      if (snapshot?.source?.verified === true && latest
+        && sameDrawIssue(game, snapshot.issue, latest.issue)
+        && snapshot.record.numbers.length === latest.numbers.length
+        && snapshot.record.numbers.every((value, index) => Number(value) === Number(latest.numbers[index]))) {
+        records[0] = mergeMissingDrawMetadata(latest, snapshot.record)
+        primary = { ...snapshot.source, checkedAt: snapshot.checkedAt }
+      }
+    } catch { /* 历史记录可用时不因快照读取失败中断。 */ }
+  }
   const provenance = sourceSummary(primary)
   return Response.json({
     ok: true,
     game,
-    records,
+    records: latestOnly ? records.slice(0, 1) : records,
     source: primary.source,
     sourceName: primary.sourceName,
     sourceType: primary.sourceType || 'third-party-archive',

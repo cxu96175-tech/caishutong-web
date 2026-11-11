@@ -56,14 +56,14 @@ try {
   const requested = []
   globalThis.fetch = async url => {
     requested.push(String(url))
-    return new Response(JSON.stringify({ state: 0, '结果': [{
-      '名称': '3D', '代码': '2026297', 'date': '2026-11-07(六)', 'red': '1,2,3', 'sales': '96507570'
-    }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+    if (String(url).includes('swlc.net.cn')) return new Response('<tr><td>2026297</td><td>2026-11-07(六)</td><td><span><i>1</i><i>2</i><i>3</i></span></td><td>1,937,630.00</td></tr>')
+    if (String(url).includes('jc.zhcw.com')) return new Response('lotteryData({"resCode":"000000","data":[{"issue":"2026297","frontWinningNum":"1 2 3","saleMoney":"96507570"}]})')
+    throw new Error('unexpected source')
   }
   const nationalFc3d = await fetchOfficial('fc3d', 1)
   assert.equal(nationalFc3d.records[0].issue, '2026297')
   assert.equal(nationalFc3d.records[0].saleAmount, 96507570, '福彩3D销量 must use national sales, not Shanghai regional sales')
-  assert.equal(requested.length, 1, '福彩3D should use the national welfare API directly')
+  assert.equal(requested.length, 2, '福彩3D confirms official digits before using nationwide sales')
 
   for (const game of ['dlt', 'pl3', 'pl5', 'qxc']) {
     const requested = []
@@ -77,7 +77,7 @@ try {
     assert.equal(upstream.sourceType, 'official')
     assert.equal(upstream.fallback, true)
     assert.equal(upstream.records[0].issue, game === 'dlt' || game === 'qxc' ? '26127' : '26297')
-    assert.equal(requested.length, 2, `${game} first tries the national API, then official regional HTML`)
+    assert.equal(requested.length, game === 'qxc' ? 3 : 2, `${game} first tries the national API, then official regional HTML`)
   }
 } finally {
   globalThis.fetch = originalOfficialFetch
@@ -131,9 +131,10 @@ const refreshDb = {
     }
   }
 }
-globalThis.fetch = async () => {
+globalThis.fetch = async url => {
   upstreamCalls += 1
-  return Response.json({ issue: '2026301', drawDate: '2026-11-07', result: '1 2 3' })
+  if (String(url).includes('swlc.net.cn')) return new Response('<tr><td>2026301</td><td>2026-11-07(六)</td><td><span><i>1</i><i>2</i><i>3</i></span></td><td>1,937,630.00</td></tr>')
+  return new Response('lotteryData({"resCode":"000000","data":[{"issue":"2026301","frontWinningNum":"1 2 3","saleMoney":"96507570"}]})')
 }
 try {
   const beforeManualRefresh = { issue: '2026300', drawDate: '2026-11-04', numbers: [2, 6, 1] }
@@ -148,7 +149,7 @@ try {
   assert.equal(refreshResponse.status, 200)
   assert.equal(refreshed.latestIssue, '2026301')
   assert.equal(refreshed.refreshStatus, 'updated')
-  assert.equal(upstreamCalls, 1, 'explicit refresh reads the national welfare API directly')
+  assert.equal(upstreamCalls, 2, 'explicit refresh verifies regional digits and nationwide sales')
   assert.equal((await readLatestSnapshot(refreshDb, 'fc3d')).issue, '2026301')
 
   // A verified current issue can contain legacy regional sales in D1. Manual
@@ -178,10 +179,9 @@ try {
     source: 'official:www.swlc.net.cn', sourceName: '上海市福利彩票发行中心官方开奖公告',
     sourceUrl: 'https://www.swlc.net.cn/lottery/3d.html', verified: true
   }, new Date('2026-11-07T14:00:00.000Z'))
-  globalThis.fetch = async () => Response.json({ state: 0, result: [{
-    code: '2026297', date: '2026-11-07(六)', red: '1,2,3', sales: '96507570',
-    poolmoney: '', prizegrades: [{ type: 1, typenum: '', typemoney: '' }]
-  }] })
+  globalThis.fetch = async url => String(url).includes('swlc.net.cn')
+    ? new Response('<tr><td>2026297</td><td>2026-11-07(六)</td><td><span><i>1</i><i>2</i><i>3</i></span></td><td>1,937,630.00</td></tr>')
+    : new Response('lotteryData({"resCode":"000000","data":[{"issue":"2026297","frontWinningNum":"1 2 3","saleMoney":"96507570"}]})')
   const sameIssueRefreshResponse = await getLottery({
     request: new Request('https://test.invalid/api/lottery?game=fc3d&limit=1&fresh=2026110822'),
     env: { DB: legacyRefreshDb }
@@ -359,7 +359,7 @@ try {
     { DB: allGamesDb },
     { waitUntil() {} }
   )
-  assert.deepEqual(outsideWindow, { ok: true, skipped: 'outside-draw-window' })
+  assert.deepEqual(outsideWindow, { ok: true, scheduledAt: '2026-11-05T12:00:00.000Z', skipped: 'outside-draw-window' })
   assert.equal(scheduledFetchCalls, 0)
 } finally {
   globalThis.fetch = originalScheduledFetch
