@@ -15,6 +15,11 @@ assert.deepEqual(parseOfficialSsqNoticeHtml('<table><tr><td>2026127</td><td>2026
   issue: '2026127', drawDate: '2026-11-05', numbers: [13, 14, 19, 25, 29, 32, 12]
 })
 assert.equal(parseOfficialSsqNoticeHtml('<tr><td>2026127</td><td>2026-11-05</td><td>131419252932</td><td>99</td></tr>'), null)
+assert.deepEqual(parseOfficialWelfareNoticeHtml('<tr><td>2026130</td><td>2026-11-12(四)</td><td><span><i>01</i><i>02</i><i>06</i><i>16</i><i>20</i><i>28</i></span></td><td><span><i>02</i></span></td><td>415,319,170.00</td><td>9</td><td>7,754,218.00</td><td>1,157,243,790.00</td></tr>', 'ssq')[0], {
+  issue: '2026130', drawDate: '2026-11-12', numbers: [1, 2, 6, 16, 20, 28, 2],
+  saleAmount: 415319170, poolApplicable: true, poolAmount: 1157243790,
+  firstPrize: { level: '一等奖', count: 9, amount: 7754218 }
+})
 assert.deepEqual(parseOfficialWelfareNoticeHtml('<table><tr><td>2026297</td><td>2026-11-07(六)</td><td><span><i>1</i><i>2</i><i>3</i></span></td><td>1,937,630.00</td><td>887</td></tr></table>', 'fc3d'), [],
   '3D must not accept a regional HTML sales field; use the nationwide CWL API')
 assert.deepEqual(parseShanghaiFc3dHistoryHtml('<table><tr><td>2026298</td><td>2026-11-08(日)</td><td><span><i>0</i><i>8</i><i>5</i></span></td><td>1,923,580.00</td><td>400</td></tr></table>'), [

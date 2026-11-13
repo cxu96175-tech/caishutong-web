@@ -1,5 +1,5 @@
 import { fetchOfficial, fetchProxy, LOTTERY_SOURCES } from '../functions/_lib/lotterySources.js'
-import { parseOfficialSsqNoticeHtml } from '../functions/_lib/ssqNotice.js'
+import { parseOfficialSsqNoticeHtml, parseOfficialWelfareNoticeHtml } from '../functions/_lib/ssqNotice.js'
 
 const games = Object.keys(LOTTERY_SOURCES)
 const errorText = error => {
@@ -93,7 +93,7 @@ async function fetchOfficialSsqNotice() {
   })
   if (!response.ok) throw new Error(`上海福彩公告 HTTP ${response.status}`)
   const html = await response.text()
-  const record = parseOfficialSsqNoticeHtml(html)
+  const record = parseOfficialWelfareNoticeHtml(html, 'ssq')[0] || parseOfficialSsqNoticeHtml(html)
   if (record) {
     return { game: 'ssq', record, verified: true,
       source: 'official:swlc.net.cn', sourceName: '上海市福利彩票发行中心官方开奖公告',

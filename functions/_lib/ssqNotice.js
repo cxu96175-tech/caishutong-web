@@ -60,7 +60,8 @@ export function parseOfficialWelfareNoticeHtml(html, game) {
     const numbers = ballCells.flatMap(cell => [...cell.matchAll(/<i\b[^>]*>([\s\S]*?)<\/i>/gi)].map(([, value]) => Number(cleanCell(value))))
     if (numbers.length !== config.count || numbers.some((number, index) => !Number.isInteger(number)
       || number < config.ranges[index][0] || number > config.ranges[index][1])) continue
-    if (game !== 'fc3d' && new Set(numbers).size !== numbers.length) continue
+    if (game === 'ssq' ? new Set(numbers.slice(0, 6)).size !== 6
+      : game !== 'fc3d' && new Set(numbers).size !== numbers.length) continue
     const saleAmount = parseMoney(cleanCell(cells[config.saleIndex] || ''))
     const poolAmount = config.poolIndex === undefined ? undefined : parseMoney(cleanCell(cells[config.poolIndex] || ''))
     const firstPrizeCount = config.firstPrizeCountIndex === undefined ? undefined : parseMoney(cleanCell(cells[config.firstPrizeCountIndex] || ''))

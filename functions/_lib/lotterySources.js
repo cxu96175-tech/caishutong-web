@@ -433,9 +433,27 @@ export async function fetchOfficial(game, limit) {
       const records = parseOfficialFc3dNoticeHtml(html).slice(0, limit)
       if (records.length) {
         records[0] = { ...records[0], poolApplicable: false }
-        try { records[0] = await enrichNationalFc3d(records[0]) } catch { /* 保留官方核实的奖号。 */ }
+        let metadataSource = null
+        try {
+          records[0] = await enrichNationalFc3d(records[0])
+          if (records[0].saleAmount != null) metadataSource = 'zhcw.com:全国销量'
+        } catch { /* 继续尝试中国福彩网全国接口。 */ }
+        if (records[0].saleAmount == null) {
+          try {
+            const national = sortUnique(parseOfficialRows(await fetchJson(url, { headers: {
+              Accept: 'application/json', Referer: LOTTERY_SOURCES.fc3d.official.site,
+              'User-Agent': 'Mozilla/5.0'
+            } }), game))[0]
+            if (national && national.issue === records[0].issue
+              && national.numbers.every((value, index) => value === records[0].numbers[index])
+              && national.saleAmount != null) {
+              records[0] = mergeMissingDrawMetadata(records[0], national)
+              metadataSource = 'official:www.cwl.gov.cn'
+            }
+          } catch { /* 保留上海官方核实的奖号。 */ }
+        }
         return { records, source: 'official:www.swlc.net.cn', sourceName: '上海市福利彩票发行中心官方开奖公告', sourceUrl: pageUrl, sourceType: 'official', fallback: false, verified: true,
-          ...(records[0].saleAmount != null ? { metadataSource: 'zhcw.com:全国销量' } : {}) }
+          ...(metadataSource ? { metadataSource } : {}) }
       }
     } catch { /* 上海公告不可用时继续尝试中国福彩网接口。 */ }
   }
