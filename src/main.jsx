@@ -213,7 +213,7 @@ function formatTrendDrawNumber(record) {
   return blue ? `${red} + ${blue}` : red || '--'
 }
 
-const trendStatColumns = {}
+const trendStatColumns = Object.fromEntries(Object.keys(games).map(game => [game, [['sum','和值',52],['sumTail','和值尾',52],['span','跨度',52]]]))
 
 const trendViewModes = [
   ['basic', '基本走势'],
@@ -465,6 +465,7 @@ function getTrendStats(game, record) {
     draw: formatTrendDrawNumber(record),
     shape: getDigitShape(game, digits),
     sum: digits.reduce((total, value) => total + value, 0),
+    sumTail: digits.length ? digits.reduce((total, value) => total + value, 0) % 10 : '--',
     span: digits.length ? Math.max(...digits) - Math.min(...digits) : '--',
     oddEven: countRatio(value => value % 2 === 1),
     bigSmall: countRatio(value => value >= 5),
@@ -695,14 +696,15 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const exportTargetId = exportId || `trend-export-${game}`
   const rows = useMemo(() => history.slice(0, period).reverse(), [history, period])
   const groups = useMemo(() => getTrendGroups(game), [game])
-  const statColumns = trendStatColumns[game] || []
+  const statColumns = numberStyle === 'plain' ? (trendStatColumns[game] || []) : []
   const showLines = ['fc3d', 'pl3', 'pl5', 'ssq', 'qxc'].includes(game)
   const totalCells = groups.reduce((sum, group) => sum + group.values.length, 0)
   const statWidth = statColumns.reduce((sum, column) => sum + column[2], 0)
   const cell = 28
-  const rowHeight = 34, serialWidth = 42, issueWidth = 78, headerHeight = 64
-  const tableWidth = serialWidth + issueWidth + totalCells * cell + statWidth
-  const groupStart = serialWidth + issueWidth
+  const plainDrawWidths = { fc3d:112, pl3:112, pl5:148, qxc:184, ssq:224, dlt:196, qlc:196, kl8:390 }
+  const rowHeight = 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = 64
+  const tableWidth = serialWidth + issueWidth + plainDrawWidth + totalCells * cell + statWidth
+  const groupStart = serialWidth + issueWidth + plainDrawWidth
   const rowData = useMemo(() => {
     const misses = groups.map(group => Object.fromEntries(group.values.map(value => [value, 0])))
     return rows.map(record => ({ record, stats: getTrendStats(game, record), groups: groups.map((group, groupIndex) => {
@@ -856,7 +858,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
       const modeLabel = trendViewModes.find(([key]) => key === trendMode)?.[1] || '基本走势'
       await exportTrendElement(exportTargetId, exportFilename || `${games[game]?.name || game}-${modeLabel}-${rows.length}期.png`, {
         title: exportTitle || `${games[game]?.name || game}${modeLabel}`,
-        params: exportParams ?? `期数：${rows.length}期${trendMode === 'basic' ? ` · 遗漏值：${showMisses ? '显示' : '隐藏'}${['ssq','dlt'].includes(game) ? ` · 连号标记：${showPatterns ? '显示' : '隐藏'}` : ''}` : ''}`
+        params: exportParams ?? `期数：${rows.length}期${trendMode === 'basic' ? (numberStyle === 'plain' ? ' · 纯数字' : ` · 遗漏值：${showMisses ? '显示' : '隐藏'}`) + `${['ssq','dlt'].includes(game) ? ` · 连号标记：${showPatterns ? '显示' : '隐藏'}` : ''}` : ''}`
       }, {
         fullWidth: true,
         redrawTrendLines: trendMode === 'basic' && !['dlt','kl8'].includes(game),
@@ -873,8 +875,8 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     exportHighResolution().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
     return () => { active = false }
   }, [autoExport])
-  const summaryHeight = summaryRows.length * 30
-  const simulatorHeight = 56
+  const summaryHeight = numberStyle === 'plain' ? 0 : summaryRows.length * 30
+  const simulatorHeight = numberStyle === 'plain' ? 0 : 56
   const canvasHeight = headerHeight + rows.length * rowHeight + simulatorHeight + summaryHeight
   const derivedBaseHeight = ['fc3d', 'pl3'].includes(game)
     ? (trendMode === 'span' || trendMode === 'sum' ? 72 : 72)
@@ -882,19 +884,37 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const renderedCanvasHeight = trendMode === 'basic' ? canvasHeight : derivedBaseHeight + rows.length * 34
   const renderedCanvasWidth = trendMode === 'basic' ? tableWidth : '100%'
   let boundaryOffset = 0
-  const groupBoundaries = groups.slice(0, -1).map(group => { boundaryOffset += group.values.length * cell; return serialWidth + issueWidth + boundaryOffset })
+  const groupBoundaries = groups.slice(0, -1).map(group => { boundaryOffset += group.values.length * cell; return groupStart + boundaryOffset })
   return <section className={`card classic-trend trend-fold-card ${expanded ? 'expanded' : ''} ${showPatterns ? 'show-pattern-hits' : ''}`} style={{ '--trend-table-width':`${tableWidth}px` }}><button className="trend-collapse-toggle" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}><span><b>基础走势图</b><small>近 {rows.length} 期 · 号码走势与遗漏统计</small></span><ChevronDown size={20}/></button>
-    {expanded && <><div className="trend-view-tabs" role="tablist" aria-label="走势类型">{trendViewModes.map(([key,label]) => <button type="button" role="tab" aria-selected={trendMode === key} className={trendMode === key ? 'active' : ''} onClick={() => setTrendMode(key)} key={key}>{label}</button>)}</div><div className="trend-fold-controls"><span>横向滑动查看更多号码</span><div className="trend-filter-actions">{trendMode === 'basic' && <><div className="trend-number-style" role="group" aria-label="开奖号码显示样式"><span>号码样式</span><button type="button" aria-pressed={numberStyle === 'ball'} className={numberStyle === 'ball' ? 'active' : ''} onClick={() => setNumberStyle('ball')}>圆号</button><button type="button" aria-pressed={numberStyle === 'plain'} className={numberStyle === 'plain' ? 'active' : ''} onClick={() => setNumberStyle('plain')}>纯数字</button></div><label className="pattern-filter"><input type="checkbox" checked={showMisses} onChange={event => setShowMisses(event.target.checked)}/><i/><span>遗漏值</span></label>{['ssq','dlt'].includes(game) && <label className="pattern-filter"><input type="checkbox" checked={showPatterns} onChange={event => setShowPatterns(event.target.checked)}/><i/><span>连号标记</span></label>}</>}<button className="trend-export-button" disabled={exporting} onClick={exportHighResolution}><Download size={15}/>{exporting ? '生成中…' : '导出高清图'}</button><TrendPeriodPicker value={period} options={trendPeriodOptions} onChange={setPeriod}/></div></div>
+    {expanded && <><div className="trend-view-tabs" role="tablist" aria-label="走势类型">{trendViewModes.map(([key,label]) => <button type="button" role="tab" aria-selected={trendMode === key} className={trendMode === key ? 'active' : ''} onClick={() => setTrendMode(key)} key={key}>{label}</button>)}</div><div className="trend-fold-controls"><span>横向滑动查看更多号码</span><div className="trend-filter-actions">{trendMode === 'basic' && <><div className="trend-number-style" role="group" aria-label="开奖号码显示样式"><span>号码样式</span><button type="button" aria-pressed={numberStyle === 'ball'} className={numberStyle === 'ball' ? 'active' : ''} onClick={() => setNumberStyle('ball')}>圆号</button><button type="button" aria-pressed={numberStyle === 'plain'} className={numberStyle === 'plain' ? 'active' : ''} onClick={() => setNumberStyle('plain')}>纯数字</button></div>{numberStyle === 'ball' && <label className="pattern-filter"><input type="checkbox" checked={showMisses} onChange={event => setShowMisses(event.target.checked)}/><i/><span>遗漏值</span></label>}{['ssq','dlt'].includes(game) && <label className="pattern-filter"><input type="checkbox" checked={showPatterns} onChange={event => setShowPatterns(event.target.checked)}/><i/><span>连号标记</span></label>}</>}<button className="trend-export-button" disabled={exporting} onClick={exportHighResolution}><Download size={15}/>{exporting ? '生成中…' : '导出高清图'}</button><TrendPeriodPicker value={period} options={trendPeriodOptions} onChange={setPeriod}/></div></div>
     <div className="trend-scroll"><div className={`trend-canvas ${trendMode === 'basic' && numberStyle === 'plain' ? 'plain-number-trend' : ''}`} id={exportTargetId} style={{ width: renderedCanvasWidth, height: renderedCanvasHeight, '--trend-cell-size':`${cell}px` }}>
       {trendMode === 'basic' ? <>
-      <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-serial-head" style={{ width: serialWidth, height: headerHeight }}>序号</div><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
+      <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-serial-head" style={{ width: serialWidth, height: headerHeight }}>序号</div><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{numberStyle === 'plain' && <div className="trend-draw-number-head" style={{ width:plainDrawWidth, height:headerHeight }}>开奖号码</div>}{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
       <div className="trend-number-head" style={{ left: groupStart, width: totalCells * cell, height: 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
       {showLines && game !== 'kl8' && <svg className="trend-lines" data-line-renderer="segments-v3" preserveAspectRatio="none" style={{ left:groupStart, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => !line.distribution && (game !== 'ssq' || line.accent) ? line.segments.map((segment,segmentIndex) => <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={line.color} strokeWidth="1.6" strokeLinecap="round" opacity=".85"/>) : [])}</svg>}
       {groupBoundaries.map((left, index) => <span className="trend-group-divider" style={{ left, height:canvasHeight }} key={index}/>) }
-      <div className="trend-body" style={{ top: headerHeight }}>{rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}><div className="trend-issue" style={{ width: issueWidth }}>{record.issue}</div>{rowGroups.flatMap((group, groupIndex) => group.values.map(cellData => <div className={`trend-cell ${cellData.hit ? `hit ${groups[groupIndex].accent ? 'hit-blue' : ''} ${cellData.patternHit ? 'pattern-hit' : ''} ${groups[groupIndex].distribution ? `distribution-hit ${cellData.hitCount > 1 ? 'repeat-hit' : ''}` : ''}` : ''}`} style={{ width: cell, height: rowHeight }} key={`${record.id}-${groupIndex}-${cellData.value}`}>{cellData.hit ? <b>{cellData.value}{groups[groupIndex].distribution && cellData.hitCount > 1 && <i>{cellData.hitCount}</i>}</b> : <span>{showMisses ? cellData.miss : ''}</span>}</div>))}{statColumns.map(([key,,width]) => <div className={`trend-stat ${key === 'shape' ? `shape-${stats[key] === '豹子' ? 'baozi' : stats[key] === '组三' ? 'group3' : 'group6'}` : ''}`} style={{ width, height: rowHeight }} key={`${record.id}-${key}`}><span>{stats[key]}</span></div>)}</div>)}<div className="trend-simulator" style={{ width:tableWidth }}><div className="trend-simulator-label" style={{ width:issueWidth }}>模拟选号</div>{groups.flatMap(group => group.values.map(value => group.distribution ? <span className="sim-placeholder" style={{ width:cell }} key={`${group.key}-${value}`}/> : <button className={(simulation[group.key] || []).includes(value) ? 'selected' : ''} style={{ width:cell }} onClick={() => chooseSimulation(group,value)} key={`${group.key}-${value}`}>{value}</button>))}<span style={{ width:statWidth }}/></div>{summaryRows.map(summary => <div className="trend-summary-row" style={{ height:30 }} key={summary.key}><div className="trend-summary-label" style={{ width:issueWidth }}>{summary.label}</div>{summary.groups.flatMap((values, groupIndex) => values.map((value, valueIndex) => <div className="trend-summary-cell" style={{ width:cell }} key={`${summary.key}-${groupIndex}-${valueIndex}`}>{value}</div>))}<div className="trend-summary-spacer" style={{ width:statWidth }}/></div>)}</div>
+      <div className="trend-body" style={{ top: headerHeight }}>
+        {rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}>
+          <div className="trend-issue" style={{ width: issueWidth }}>{record.issue}</div>
+          {numberStyle === 'plain' && <div className="trend-draw-number" style={{ width:plainDrawWidth, height:rowHeight }} title={formatTrendDrawNumber(record)}>{formatTrendDrawNumber(record)}</div>}
+          {rowGroups.flatMap((group, groupIndex) => group.values.map(cellData => {
+            const distributionType = cellData.hitCount >= 3 ? 'distribution-triple' : cellData.hitCount === 2 ? 'distribution-repeat' : 'distribution-single'
+            const distributionLabel = cellData.hitCount >= 3 ? '豹子' : cellData.hitCount === 2 ? '重号' : '无重号'
+            const distributionClass = numberStyle === 'plain' ? distributionType : (cellData.hitCount > 1 ? 'repeat-hit' : '')
+            return <div className={`trend-cell ${cellData.hit ? `hit ${groups[groupIndex].accent ? 'hit-blue' : ''} ${cellData.patternHit ? 'pattern-hit' : ''} ${groups[groupIndex].distribution ? `distribution-hit ${distributionClass}` : ''}` : ''}`} title={numberStyle === 'plain' && cellData.hit && groups[groupIndex].distribution ? `${cellData.value}：${distributionLabel}` : undefined} aria-label={numberStyle === 'plain' && cellData.hit && groups[groupIndex].distribution ? `号码 ${cellData.value}，${distributionLabel}` : undefined} style={{ width: cell, height: rowHeight }} key={`${record.id}-${groupIndex}-${cellData.value}`}>
+              {cellData.hit ? <b>{cellData.value}{numberStyle === 'ball' && groups[groupIndex].distribution && cellData.hitCount > 1 && <i>{cellData.hitCount}</i>}</b> : <span>{showMisses && numberStyle === 'ball' ? cellData.miss : ''}</span>}
+            </div>
+          }))}
+          {statColumns.map(([key,,width]) => <div className="trend-stat" style={{ width, height: rowHeight }} key={`${record.id}-${key}`}><span>{stats[key]}</span></div>)}
+        </div>)}
+        {numberStyle === 'ball' && <>
+          <div className="trend-simulator" style={{ width:tableWidth }}><div className="trend-simulator-label" style={{ width:issueWidth }}>模拟选号</div>{groups.flatMap(group => group.values.map(value => group.distribution ? <span className="sim-placeholder" style={{ width:cell }} key={`${group.key}-${value}`}/> : <button className={(simulation[group.key] || []).includes(value) ? 'selected' : ''} style={{ width:cell }} onClick={() => chooseSimulation(group,value)} key={`${group.key}-${value}`}>{value}</button>))}<span style={{ width:statWidth }}/></div>
+          {summaryRows.map(summary => <div className="trend-summary-row" style={{ height:30 }} key={summary.key}><div className="trend-summary-label" style={{ width:issueWidth }}>{summary.label}</div>{summary.groups.flatMap((values, groupIndex) => values.map((value, valueIndex) => <div className="trend-summary-cell" style={{ width:cell }} key={`${summary.key}-${groupIndex}-${valueIndex}`}>{value}</div>))}<div className="trend-summary-spacer" style={{ width:statWidth }}/></div>)}
+        </>}
+      </div>
       </> : <TrendModeTable game={game} rows={rows} mode={trendMode}/>}
     </div></div>
-    {trendMode === 'basic' && <div className="simulation-footer"><span>已选 <b>{selectedTotal}</b> 个，共 <b>{bets}</b> 注</span><label><input type="number" min="1" max="99" value={multiplier} onChange={event => setMultiplier(Math.max(1, Math.min(99, Number(event.target.value) || 1)))}/> 倍</label><strong>{bets * multiplier * 2} 元</strong><button onClick={() => setSimulation({})}>清空选号</button><button className="save-simulation" disabled={!bets} onClick={saveSimulation}>保存方案</button></div>}
+    {trendMode === 'basic' && numberStyle === 'ball' && <div className="simulation-footer"><span>已选 <b>{selectedTotal}</b> 个，共 <b>{bets}</b> 注</span><label><input type="number" min="1" max="99" value={multiplier} onChange={event => setMultiplier(Math.max(1, Math.min(99, Number(event.target.value) || 1)))}/> 倍</label><strong>{bets * multiplier * 2} 元</strong><button onClick={() => setSimulation({})}>清空选号</button><button className="save-simulation" disabled={!bets} onClick={saveSimulation}>保存方案</button></div>}
     </>}
   </section>
 }
