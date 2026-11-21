@@ -702,7 +702,8 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const statWidth = statColumns.reduce((sum, column) => sum + column[2], 0)
   const cell = 28
   const plainDrawWidths = { fc3d:112, pl3:112, pl5:148, qxc:184, ssq:224, dlt:196, qlc:196, kl8:390 }
-  const rowHeight = 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = 64
+  const plainNumberMode = trendMode === 'basic' && numberStyle === 'plain'
+  const rowHeight = plainNumberMode ? 30 : 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = plainNumberMode ? 58 : 64
   const tableWidth = serialWidth + issueWidth + plainDrawWidth + totalCells * cell + statWidth
   const groupStart = serialWidth + issueWidth + plainDrawWidth
   const rowData = useMemo(() => {
@@ -736,6 +737,11 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const lines = useMemo(() => {
     let offset = 0
     return groups.flatMap((group, groupIndex) => {
+      const positionTrack = !group.distribution && group.count === 1
+      if (numberStyle === 'plain' && !positionTrack) {
+        offset += group.values.length * cell
+        return []
+      }
       const series = Array.from({ length: group.count }, (_, seriesIndex) => {
         const points = rowData.map((row, rowIndex) => {
           const hits = row.groups[groupIndex].hits.slice().sort((a,b) => +a - +b)
@@ -744,12 +750,13 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
           return valueIndex < 0 ? null : { x:offset + valueIndex * cell + cell / 2, y:rowIndex * rowHeight + rowHeight / 2 }
         })
         const segments = points.slice(0,-1).flatMap((point,index) => point && points[index + 1] ? [{ from:point, to:points[index + 1] }] : [])
-        return { segments, color:'#A0A0A0', accent:Boolean(group.accent), distribution:Boolean(group.distribution) }
+        return { segments, color:numberStyle === 'plain' ? '#3155ff' : '#A0A0A0', accent:Boolean(group.accent), distribution:Boolean(group.distribution), positionTrack }
       })
       offset += group.values.length * cell
       return series
     })
-  }, [groups, rowData])
+  }, [groups, rowData, numberStyle, rowHeight, cell])
+  const hasPlainLineSegments = plainNumberMode && lines.some(line => line.positionTrack && line.segments.length > 0)
   const summaryRows = useMemo(() => {
     const labels = [['current','当前遗漏'],['average','平均遗漏'],['maximum','最大遗漏'],['total','总次数'],['streak','最大连出']]
     return labels.map(([key,label]) => ({ key, label, groups: groups.map((group, groupIndex) => group.values.map((value, valueIndex) => {
@@ -785,7 +792,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     if (!context || !targetWidth || !targetHeight) return
     const scaleX = canvas.width / targetWidth, scaleY = canvas.height / targetHeight
     const scale = Math.min(scaleX,scaleY)
-    const hitRadius = 12.6 * scale
+    const hitRadius = (plainNumberMode ? 7.2 : 12.6) * scale
     const hitCircles = []
     let groupOffset = 0
     groups.forEach((group,groupIndex) => {
@@ -837,12 +844,13 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     }
     context.save()
     context.setTransform(1,0,0,1,0,0)
-    context.lineWidth = 1.6 * scale
+    context.lineWidth = (plainNumberMode ? 1.45 : 1.6) * scale
     context.lineCap = 'round'
-    context.strokeStyle = '#A0A0A0'
-    context.globalAlpha = .85
+    context.strokeStyle = plainNumberMode ? '#3155ff' : '#A0A0A0'
+    context.globalAlpha = plainNumberMode ? .68 : .85
     lines.forEach(line => {
-      if (line.distribution || (game === 'ssq' && !line.accent)) return
+      const shouldDraw = plainNumberMode ? line.positionTrack : !line.distribution && (game !== 'ssq' || line.accent)
+      if (!shouldDraw) return
       line.segments.forEach(segment => drawVisibleSegment(segment.from,segment.to))
     })
     context.restore()
@@ -861,9 +869,9 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
         params: exportParams ?? `期数：${rows.length}期${trendMode === 'basic' ? (numberStyle === 'plain' ? ' · 纯数字' : ` · 遗漏值：${showMisses ? '显示' : '隐藏'}`) + `${['ssq','dlt'].includes(game) ? ` · 连号标记：${showPatterns ? '显示' : '隐藏'}` : ''}` : ''}`
       }, {
         fullWidth: true,
-        redrawTrendLines: trendMode === 'basic' && !['dlt','kl8'].includes(game),
+        redrawTrendLines: trendMode === 'basic' && (numberStyle === 'plain' ? hasPlainLineSegments : !['dlt','kl8'].includes(game)),
         drawOverlay: (canvas,width,height) => {
-          if (trendMode === 'basic' && !['dlt','kl8'].includes(game)) drawExportLines(canvas,width,height)
+          if (trendMode === 'basic' && (numberStyle === 'plain' ? hasPlainLineSegments : !['dlt','kl8'].includes(game))) drawExportLines(canvas,width,height)
         }
       })
       trackAnalytics('export_chart',{ page:'trend', game })
@@ -891,7 +899,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
       {trendMode === 'basic' ? <>
       <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-serial-head" style={{ width: serialWidth, height: headerHeight }}>序号</div><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{numberStyle === 'plain' && <div className="trend-draw-number-head" style={{ width:plainDrawWidth, height:headerHeight }}>开奖号码</div>}{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
       <div className="trend-number-head" style={{ left: groupStart, width: totalCells * cell, height: 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
-      {showLines && game !== 'kl8' && <svg className="trend-lines" data-line-renderer="segments-v3" preserveAspectRatio="none" style={{ left:groupStart, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => !line.distribution && (game !== 'ssq' || line.accent) ? line.segments.map((segment,segmentIndex) => <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={line.color} strokeWidth="1.6" strokeLinecap="round" opacity=".85"/>) : [])}</svg>}
+      {(plainNumberMode ? hasPlainLineSegments : showLines) && <svg className="trend-lines" data-line-renderer={plainNumberMode ? 'position-tracks' : 'segments-v3'} preserveAspectRatio="none" style={{ left:groupStart, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => (plainNumberMode ? line.positionTrack : !line.distribution && (game !== 'ssq' || line.accent)) ? line.segments.map((segment,segmentIndex) => <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={line.color} strokeWidth={plainNumberMode ? '1.45' : '1.6'} strokeLinecap="round" opacity={plainNumberMode ? '.68' : '.85'}/>) : [])}</svg>}
       {groupBoundaries.map((left, index) => <span className="trend-group-divider" style={{ left, height:canvasHeight }} key={index}/>) }
       <div className="trend-body" style={{ top: headerHeight }}>
         {rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}>

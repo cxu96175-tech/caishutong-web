@@ -898,6 +898,11 @@
 .plain-number-trend .trend-stat{background:#fbfcfe;color:#4f5663;font-size:11px;font-variant-numeric:tabular-nums}
 .plain-number-trend .trend-table-row:nth-child(even) .trend-stat{background:#f6f8fb}
 .plain-number-trend .trend-group-divider{border-left-color:#c8ced8}
+.plain-number-trend .trend-table-row{border-bottom-color:#e6e9ef}
+.plain-number-trend .trend-number-head>div{font-size:10px;font-weight:700}
+.plain-number-trend .trend-lines{z-index:3}
+.plain-number-trend .trend-cell{z-index:4}
+.plain-number-trend .trend-cell.hit b{z-index:5;line-height:1}
 .plain-number-trend .trend-cell.hit b{font-size:1.5em!important}
 .plain-number-trend .trend-cell.distribution-single.hit b{color:#dc4555!important}
 .plain-number-trend .trend-cell.distribution-repeat.hit b{color:#b57509!important}
