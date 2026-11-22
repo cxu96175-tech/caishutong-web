@@ -213,6 +213,15 @@ function formatTrendDrawNumber(record) {
   return blue ? `${red} + ${blue}` : red || '--'
 }
 
+function trimTrendSegment(segment, gap = 10) {
+  const dx = segment.to.x - segment.from.x, dy = segment.to.y - segment.from.y
+  const length = Math.hypot(dx, dy)
+  const trim = Math.min(gap, Math.max(0, length / 2 - 0.5))
+  if (!length || !trim) return segment
+  const x = dx / length * trim, y = dy / length * trim
+  return { from:{ x:segment.from.x + x, y:segment.from.y + y }, to:{ x:segment.to.x - x, y:segment.to.y - y } }
+}
+
 const trendStatColumns = Object.fromEntries(Object.keys(games).map(game => [game, [['sum','和值',52],['sumTail','和值尾',52],['span','跨度',52]]]))
 
 const trendViewModes = [
@@ -701,9 +710,9 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const totalCells = groups.reduce((sum, group) => sum + group.values.length, 0)
   const statWidth = statColumns.reduce((sum, column) => sum + column[2], 0)
   const cell = 28
-  const plainDrawWidths = { fc3d:112, pl3:112, pl5:148, qxc:184, ssq:224, dlt:196, qlc:196, kl8:390 }
+  const plainDrawWidths = { fc3d:64, pl3:64, pl5:88, qxc:116, ssq:142, dlt:132, qlc:132, kl8:188 }
   const plainNumberMode = trendMode === 'basic' && numberStyle === 'plain'
-  const rowHeight = plainNumberMode ? 30 : 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = plainNumberMode ? 58 : 64
+  const rowHeight = plainNumberMode ? 28 : 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = plainNumberMode ? 58 : 64
   const tableWidth = serialWidth + issueWidth + plainDrawWidth + totalCells * cell + statWidth
   const groupStart = serialWidth + issueWidth + plainDrawWidth
   const rowData = useMemo(() => {
@@ -792,7 +801,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     if (!context || !targetWidth || !targetHeight) return
     const scaleX = canvas.width / targetWidth, scaleY = canvas.height / targetHeight
     const scale = Math.min(scaleX,scaleY)
-    const hitRadius = (plainNumberMode ? 7.2 : 12.6) * scale
+    const hitRadius = (plainNumberMode ? 10 : 12.6) * scale
     const hitCircles = []
     let groupOffset = 0
     groups.forEach((group,groupIndex) => {
@@ -899,7 +908,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
       {trendMode === 'basic' ? <>
       <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-serial-head" style={{ width: serialWidth, height: headerHeight }}>序号</div><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{numberStyle === 'plain' && <div className="trend-draw-number-head" style={{ width:plainDrawWidth, height:headerHeight }}>开奖号码</div>}{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
       <div className="trend-number-head" style={{ left: groupStart, width: totalCells * cell, height: 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
-      {(plainNumberMode ? hasPlainLineSegments : showLines) && <svg className="trend-lines" data-line-renderer={plainNumberMode ? 'position-tracks' : 'segments-v3'} preserveAspectRatio="none" style={{ left:groupStart, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => (plainNumberMode ? line.positionTrack : !line.distribution && (game !== 'ssq' || line.accent)) ? line.segments.map((segment,segmentIndex) => <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={segment.from.x} y1={segment.from.y} x2={segment.to.x} y2={segment.to.y} stroke={line.color} strokeWidth={plainNumberMode ? '1.45' : '1.6'} strokeLinecap="round" opacity={plainNumberMode ? '.68' : '.85'}/>) : [])}</svg>}
+      {(plainNumberMode ? hasPlainLineSegments : showLines) && <svg className="trend-lines" data-line-renderer={plainNumberMode ? 'position-tracks' : 'segments-v3'} preserveAspectRatio="none" style={{ left:groupStart, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => (plainNumberMode ? line.positionTrack : !line.distribution && (game !== 'ssq' || line.accent)) ? line.segments.map((segment,segmentIndex) => { const visible = plainNumberMode ? trimTrendSegment(segment) : segment; return <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={visible.from.x} y1={visible.from.y} x2={visible.to.x} y2={visible.to.y} stroke={line.color} strokeWidth={plainNumberMode ? '1.45' : '1.6'} strokeLinecap="round" opacity={plainNumberMode ? '.68' : '.85'}/> }) : [])}</svg>}
       {groupBoundaries.map((left, index) => <span className="trend-group-divider" style={{ left, height:canvasHeight }} key={index}/>) }
       <div className="trend-body" style={{ top: headerHeight }}>
         {rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}>

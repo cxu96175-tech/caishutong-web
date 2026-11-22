@@ -884,11 +884,13 @@
 @media(max-width:760px){.trend-period-trigger{min-width:104px;height:34px;font-size:11px}.trend-period-menu button{min-height:38px;font-size:12px}}
 
 /* Compact plain-number trend matrix: fixed, readable draw fields and product-light grid. */
-.plain-number-trend .trend-group-head .trend-serial-head{position:sticky;left:0;z-index:12}
-.plain-number-trend .trend-table-row::before{position:sticky;left:0;z-index:8}
+.plain-number-trend .trend-group-head .trend-serial-head{position:sticky;left:0;z-index:12;box-sizing:border-box;flex:0 0 42px;width:42px}
+.plain-number-trend .trend-group-head .trend-issue-head{left:42px;z-index:12;box-sizing:border-box;flex:0 0 78px;width:78px}
+.plain-number-trend .trend-table-row::before{position:sticky;left:0;z-index:9;box-sizing:border-box;flex:0 0 42px;width:42px;min-width:42px}
+.plain-number-trend .trend-table-row::before{position:sticky;left:0;z-index:9}
 .plain-number-trend .trend-group-head .trend-issue-head{left:42px;z-index:12}
 .plain-number-trend .trend-draw-number-head{position:sticky;left:120px;z-index:11;flex:0 0 auto;background:#f3f5f8;border-right:1px solid #dfe2e8;border-bottom:1px solid #dfe2e8;color:#606773}
-.plain-number-trend .trend-issue{position:sticky;left:42px;z-index:7;color:#737b88;font-size:11px;font-weight:600;white-space:nowrap}
+.plain-number-trend .trend-issue{position:sticky;left:42px;z-index:8;box-sizing:border-box;flex:0 0 78px;width:78px;color:#737b88;font-size:11px;font-weight:600;white-space:nowrap}
 .plain-number-trend .trend-draw-number{position:sticky;left:120px;z-index:6;display:flex;align-items:center;flex:0 0 auto;box-sizing:border-box;padding:0 10px;overflow:visible;border-right:1px solid #e2e6ed;background:#fff;color:#343a45;font-size:12px;font-weight:600;letter-spacing:.04em;white-space:nowrap}
 .plain-number-trend .trend-table-row:nth-child(even) .trend-draw-number{background:#fafbfc}
 .plain-number-trend .trend-group-head>div{border-right-color:#e1e5ec}
