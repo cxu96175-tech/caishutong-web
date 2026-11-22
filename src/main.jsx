@@ -712,7 +712,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
   const cell = 28
   const plainDrawWidths = { fc3d:64, pl3:64, pl5:88, qxc:116, ssq:142, dlt:132, qlc:132, kl8:188 }
   const plainNumberMode = trendMode === 'basic' && numberStyle === 'plain'
-  const rowHeight = plainNumberMode ? 28 : 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = plainNumberMode ? 58 : 64
+  const rowHeight = plainNumberMode ? 28 : 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = 64
   const tableWidth = serialWidth + issueWidth + plainDrawWidth + totalCells * cell + statWidth
   const groupStart = serialWidth + issueWidth + plainDrawWidth
   const rowData = useMemo(() => {
