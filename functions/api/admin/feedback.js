@@ -1,4 +1,5 @@
 import { getAdminEmail } from '../../_lib/adminAuth.js'
+import { recordAdminActivity } from '../../_lib/adminActivity.js'
 
 const json = (body,status = 200) => Response.json(body,{ status, headers:{ 'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff' } })
 const statuses = new Set(['pending','processing','resolved'])
@@ -20,6 +21,7 @@ export async function onRequestGet({ request, env }) {
       : null
   if (!query) return json({ error:'处理状态无效' },400)
   const rows = await query.all()
+  await recordAdminActivity({ request,env,adminEmail:email,event:'view_feedback',page:'admin_feedback',target:status })
   return json({ feedback:rows.results || [] })
 }
 
@@ -34,5 +36,6 @@ export async function onRequestPatch({ request, env }) {
   if (!Number.isInteger(id) || id < 1 || !statuses.has(status)) return json({ error:'反馈参数无效' },400)
   const result = await env.DB.prepare("UPDATE user_feedback SET status=?,admin_note=?,updated_at=datetime('now') WHERE id=?").bind(status,note,id).run()
   if (!result.meta?.changes) return json({ error:'反馈不存在' },404)
+  await recordAdminActivity({ request,env,adminEmail:email,event:'update_feedback',page:'admin_feedback',target:String(id) })
   return json({ ok:true })
 }

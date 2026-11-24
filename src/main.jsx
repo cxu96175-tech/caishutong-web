@@ -42,7 +42,7 @@ const waitForPaint = () => new Promise(resolve => requestAnimationFrame(() => re
 function BatchExportWorkspace({ job }) {
   if (!job) return null
   const renderJob = () => {
-    if (job.kind === 'trend') return <TraditionalTrendTable key={job.exportId} game={job.game} history={job.history} save={() => {}} initialExpanded initialShowMisses={job.showMisses} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
+    if (job.kind === 'trend') return <TraditionalTrendTable key={job.exportId} game={job.game} history={job.history} save={() => {}} initialExpanded initialShowMisses={job.showMisses} initialNumberStyle={job.numberStyle} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
     if (job.kind === 'heat') {
       const HeatComponent = job.game === 'dlt' ? DltHeatTrend : SsqHeatTrend
       return <HeatComponent key={job.exportId} history={job.history} exportId={job.exportId} autoExport exportFilename={job.filename} exportTitle={job.title} exportParams={job.params} onExportComplete={job.onComplete}/>
@@ -134,7 +134,7 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
     const exportItems = gameOrder.map(game => ({ game, item:all.find(record => record.game === game) })).filter(entry => entry.item)
     // 首页批量导出复用内页导出规则：基础走势图（显示/隐藏遗漏各一张）、完整详情图，
     // 再加上该彩种内页实际提供的冷热图 / 快乐8图表 / 七星彩历史长图。
-    const total = exportItems.reduce((count, { game }) => count + 3 + (['dlt','ssq'].includes(game) ? 1 : 0) + (game === 'kl8' ? 2 : 0) + (game === 'qxc' ? 1 : 0), 0)
+    const total = exportItems.reduce((count, { game }) => count + 4 + (['dlt','ssq'].includes(game) ? 1 : 0) + (game === 'kl8' ? 2 : 0) + (game === 'qxc' ? 1 : 0), 0)
     setBatchExporting(true); setBatchProgress({ current:0, total })
     try {
       const histories = Object.fromEntries(await Promise.all(exportItems.map(async ({ game }) => {
@@ -152,6 +152,8 @@ function HomePage({ open, openTrend, openHistory, openRules, canExport = false }
         await runJob({ kind:'trend', game, history:histories[game], showMisses:true, exportId:`batch-trend-${game}`, filename:`${item.name}-基本走势-${trendPeriod}期.png`, title:`${item.name}基本走势`, params:`期数：${trendPeriod}期 · 遗漏值：显示${patternParams}` })
         setBatchJob(null); await waitForPaint()
         await runJob({ kind:'trend', game, history:histories[game], showMisses:false, exportId:`batch-trend-nomiss-${game}`, filename:`${item.name}-基本走势-无遗漏-${trendPeriod}期.png`, title:`${item.name}基本走势（无遗漏）`, params:`期数：${trendPeriod}期 · 遗漏值：隐藏${patternParams}` })
+        setBatchJob(null); await waitForPaint()
+        await runJob({ kind:'trend', game, history:histories[game], showMisses:false, numberStyle:'plain', exportId:`batch-trend-plain-${game}`, filename:`${item.name}-纯数字走势图-${trendPeriod}期.png`, title:`${item.name}纯数字走势图`, params:`期数：${trendPeriod}期 · 纯数字` })
         setBatchJob(null); await waitForPaint()
         await runJob({ kind:'detail', game, item, all, exportId:`batch-detail-${game}`, filename:`${item.name}-详情-${item.issue}.png`, title:`${item.name}详情`, params:`第 ${item.issue} 期 · ${item.drawDate}` })
         setBatchJob(null); await waitForPaint()
@@ -474,8 +476,8 @@ function getTrendStats(game, record) {
     draw: formatTrendDrawNumber(record),
     shape: getDigitShape(game, digits),
     sum: digits.reduce((total, value) => total + value, 0),
-    sumTail: digits.length ? digits.reduce((total, value) => total + value, 0) % 10 : '--',
     span: digits.length ? Math.max(...digits) - Math.min(...digits) : '--',
+    sumTail: digits.length ? digits.reduce((total, value) => total + value, 0) % 10 : '--',
     oddEven: countRatio(value => value % 2 === 1),
     bigSmall: countRatio(value => value >= 5),
     mod3: modCounts,
@@ -692,27 +694,28 @@ function DrawMetrics({ game, record, previousRecord }) {
   return <section className="card draw-metrics" aria-label="本期号码指标">{metrics.map(([key,label],index) => <div className="draw-metric" style={{'--metric-color':detailMetricColors[index]}} key={key}><i/><span><b>{stats[key]}</b><small>{label}</small></span></div>)}</section>
 }
 
-function TraditionalTrendTable({ game, history, save, initialExpanded = false, initialShowMisses = true, exportId, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
+function TraditionalTrendTable({ game, history, save, initialExpanded = false, initialShowMisses = true, initialNumberStyle = 'ball', exportId, autoExport = false, onExportComplete, exportFilename, exportTitle, exportParams }) {
   const [expanded, setExpanded] = useState(initialExpanded)
   const [period, setPeriod] = useState(50)
   const [trendMode, setTrendMode] = useState('basic')
   const [simulation, setSimulation] = useState({})
   const [multiplier, setMultiplier] = useState(1)
   const [showPatterns, setShowPatterns] = useState(true)
-  const [numberStyle, setNumberStyle] = useState('ball')
+  const [numberStyle, setNumberStyle] = useState(initialNumberStyle)
   const [showMisses, setShowMisses] = useState(initialShowMisses)
   const [exporting, setExporting] = useState(false)
   const exportTargetId = exportId || `trend-export-${game}`
   const rows = useMemo(() => history.slice(0, period).reverse(), [history, period])
   const groups = useMemo(() => getTrendGroups(game), [game])
   const statColumns = numberStyle === 'plain' ? (trendStatColumns[game] || []) : []
+  const showPlainDrawColumn = !['ssq','dlt','kl8','qlc','qxc'].includes(game)
+  const plainNumberMode = trendMode === 'basic' && numberStyle === 'plain'
   const showLines = ['fc3d', 'pl3', 'pl5', 'ssq', 'qxc'].includes(game)
   const totalCells = groups.reduce((sum, group) => sum + group.values.length, 0)
   const statWidth = statColumns.reduce((sum, column) => sum + column[2], 0)
   const cell = 28
   const plainDrawWidths = { fc3d:64, pl3:64, pl5:88, qxc:116, ssq:142, dlt:132, qlc:132, kl8:188 }
-  const plainNumberMode = trendMode === 'basic' && numberStyle === 'plain'
-  const rowHeight = plainNumberMode ? 28 : 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' ? (plainDrawWidths[game] || 160) : 0, headerHeight = 64
+  const rowHeight = plainNumberMode ? 28 : 34, serialWidth = 42, issueWidth = 78, plainDrawWidth = numberStyle === 'plain' && showPlainDrawColumn ? (plainDrawWidths[game] || 160) : 0, headerHeight = 64
   const tableWidth = serialWidth + issueWidth + plainDrawWidth + totalCells * cell + statWidth
   const groupStart = serialWidth + issueWidth + plainDrawWidth
   const rowData = useMemo(() => {
@@ -724,25 +727,37 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     }) }))
   }, [rows, groups, game])
   const patternHits = useMemo(() => {
-    if (!['ssq','dlt'].includes(game)) return new Set()
     const marked = new Set()
-    const directions = [[0,1],[1,0],[1,1],[1,-1]]
-    groups.forEach((group,groupIndex) => {
-      const isHit = (rowIndex,valueIndex) => Boolean(rowData[rowIndex]?.groups[groupIndex]?.values[valueIndex]?.hit)
-      rowData.forEach((row,rowIndex) => group.values.forEach((value,valueIndex) => {
-        if (!isHit(rowIndex,valueIndex)) return
-        directions.forEach(([rowStep,valueStep]) => {
-          if (isHit(rowIndex - rowStep,valueIndex - valueStep)) return
-          const run = []
-          let nextRow = rowIndex, nextValue = valueIndex
-          while (isHit(nextRow,nextValue)) { run.push(`${groupIndex}:${nextRow}:${nextValue}`); nextRow += rowStep; nextValue += valueStep }
-          if (run.length >= 3) run.forEach(key => marked.add(key))
-        })
+    if (plainNumberMode) {
+      if (!['ssq','dlt','kl8','qlc'].includes(game)) return marked
+      groups.forEach((group,groupIndex) => rowData.forEach((row,rowIndex) => {
+        const cells = row.groups[groupIndex]?.values || []
+        for (let start = 0; start <= group.values.length - 3; start += 1) {
+          const first = Number(group.values[start]), second = Number(group.values[start + 1]), third = Number(group.values[start + 2])
+          if (second !== first + 1 || third !== second + 1 || !cells[start]?.hit || !cells[start + 1]?.hit || !cells[start + 2]?.hit) continue
+          for (let valueIndex = start; valueIndex < start + 3; valueIndex += 1) marked.add(`${groupIndex}:${rowIndex}:${valueIndex}`)
+        }
       }))
-    })
+    } else {
+      if (!['ssq','dlt'].includes(game)) return marked
+      const directions = [[0,1],[1,0],[1,1],[1,-1]]
+      groups.forEach((group,groupIndex) => {
+        const isHit = (rowIndex,valueIndex) => Boolean(rowData[rowIndex]?.groups[groupIndex]?.values[valueIndex]?.hit)
+        rowData.forEach((row,rowIndex) => group.values.forEach((value,valueIndex) => {
+          if (!isHit(rowIndex,valueIndex)) return
+          directions.forEach(([rowStep,valueStep]) => {
+            if (isHit(rowIndex - rowStep,valueIndex - valueStep)) return
+            const run = []
+            let nextRow = rowIndex, nextValue = valueIndex
+            while (isHit(nextRow,nextValue)) { run.push(`${groupIndex}:${nextRow}:${nextValue}`); nextRow += rowStep; nextValue += valueStep }
+            if (run.length >= 3) run.forEach(key => marked.add(key))
+          })
+        }))
+      })
+    }
     rowData.forEach((row,rowIndex) => row.groups.forEach((group,groupIndex) => group.values.forEach((cellData,valueIndex) => { cellData.patternHit = marked.has(`${groupIndex}:${rowIndex}:${valueIndex}`) })))
     return marked
-  }, [game,groups,rowData])
+  }, [game,groups,rowData,plainNumberMode])
   const lines = useMemo(() => {
     let offset = 0
     return groups.flatMap((group, groupIndex) => {
@@ -764,7 +779,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
       offset += group.values.length * cell
       return series
     })
-  }, [groups, rowData, numberStyle, rowHeight, cell])
+  }, [groups, rowData, numberStyle])
   const hasPlainLineSegments = plainNumberMode && lines.some(line => line.positionTrack && line.segments.length > 0)
   const summaryRows = useMemo(() => {
     const labels = [['current','当前遗漏'],['average','平均遗漏'],['maximum','最大遗漏'],['total','总次数'],['streak','最大连出']]
@@ -783,6 +798,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
       return values[key]
     })) }))
   }, [groups, rowData])
+  const visibleSummaryRows = numberStyle === 'plain' ? summaryRows.filter(summary => !['current','average','maximum'].includes(summary.key)) : summaryRows
   const selectableGroups = groups.filter(group => !group.distribution)
   const chooseSimulation = (group, value) => setSimulation(current => {
     const values = current[group.key] || []
@@ -875,7 +891,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
       const modeLabel = trendViewModes.find(([key]) => key === trendMode)?.[1] || '基本走势'
       await exportTrendElement(exportTargetId, exportFilename || `${games[game]?.name || game}-${modeLabel}-${rows.length}期.png`, {
         title: exportTitle || `${games[game]?.name || game}${modeLabel}`,
-        params: exportParams ?? `期数：${rows.length}期${trendMode === 'basic' ? (numberStyle === 'plain' ? ' · 纯数字' : ` · 遗漏值：${showMisses ? '显示' : '隐藏'}`) + `${['ssq','dlt'].includes(game) ? ` · 连号标记：${showPatterns ? '显示' : '隐藏'}` : ''}` : ''}`
+        params: exportParams ?? `期数：${rows.length}期${trendMode === 'basic' ? (numberStyle === 'plain' ? ' · 纯数字' : ` · 遗漏值：${showMisses ? '显示' : '隐藏'}${['ssq','dlt'].includes(game) ? ` · 连号标记：${showPatterns ? '显示' : '隐藏'}` : ''}`) : ''}`
       }, {
         fullWidth: true,
         redrawTrendLines: trendMode === 'basic' && (numberStyle === 'plain' ? hasPlainLineSegments : !['dlt','kl8'].includes(game)),
@@ -892,7 +908,7 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     exportHighResolution().catch(() => {}).finally(() => { if (active) onExportComplete?.() })
     return () => { active = false }
   }, [autoExport])
-  const summaryHeight = numberStyle === 'plain' ? 0 : summaryRows.length * 30
+  const summaryHeight = numberStyle === 'plain' ? 0 : visibleSummaryRows.length * 30
   const simulatorHeight = numberStyle === 'plain' ? 0 : 56
   const canvasHeight = headerHeight + rows.length * rowHeight + simulatorHeight + summaryHeight
   const derivedBaseHeight = ['fc3d', 'pl3'].includes(game)
@@ -906,29 +922,11 @@ function TraditionalTrendTable({ game, history, save, initialExpanded = false, i
     {expanded && <><div className="trend-view-tabs" role="tablist" aria-label="走势类型">{trendViewModes.map(([key,label]) => <button type="button" role="tab" aria-selected={trendMode === key} className={trendMode === key ? 'active' : ''} onClick={() => setTrendMode(key)} key={key}>{label}</button>)}</div><div className="trend-fold-controls"><span>横向滑动查看更多号码</span><div className="trend-filter-actions">{trendMode === 'basic' && <><div className="trend-number-style" role="group" aria-label="开奖号码显示样式"><span>号码样式</span><button type="button" aria-pressed={numberStyle === 'ball'} className={numberStyle === 'ball' ? 'active' : ''} onClick={() => setNumberStyle('ball')}>圆号</button><button type="button" aria-pressed={numberStyle === 'plain'} className={numberStyle === 'plain' ? 'active' : ''} onClick={() => setNumberStyle('plain')}>纯数字</button></div>{numberStyle === 'ball' && <label className="pattern-filter"><input type="checkbox" checked={showMisses} onChange={event => setShowMisses(event.target.checked)}/><i/><span>遗漏值</span></label>}{['ssq','dlt'].includes(game) && <label className="pattern-filter"><input type="checkbox" checked={showPatterns} onChange={event => setShowPatterns(event.target.checked)}/><i/><span>连号标记</span></label>}</>}<button className="trend-export-button" disabled={exporting} onClick={exportHighResolution}><Download size={15}/>{exporting ? '生成中…' : '导出高清图'}</button><TrendPeriodPicker value={period} options={trendPeriodOptions} onChange={setPeriod}/></div></div>
     <div className="trend-scroll"><div className={`trend-canvas ${trendMode === 'basic' && numberStyle === 'plain' ? 'plain-number-trend' : ''}`} id={exportTargetId} style={{ width: renderedCanvasWidth, height: renderedCanvasHeight, '--trend-cell-size':`${cell}px` }}>
       {trendMode === 'basic' ? <>
-      <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-serial-head" style={{ width: serialWidth, height: headerHeight }}>序号</div><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{numberStyle === 'plain' && <div className="trend-draw-number-head" style={{ width:plainDrawWidth, height:headerHeight }}>开奖号码</div>}{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
-      <div className="trend-number-head" style={{ left: groupStart, width: totalCells * cell, height: 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
+      <div className="trend-group-head" style={{ height: 32, width: tableWidth }}><div className="trend-serial-head" style={{ width: serialWidth, height: headerHeight }}>序号</div><div className="trend-issue-head" style={{ width: issueWidth, height: headerHeight }}>期号</div>{numberStyle === 'plain' && showPlainDrawColumn && <div className="trend-draw-number-head" style={{ width:plainDrawWidth, height:headerHeight }}>开奖号码</div>}{groups.map(group => <div style={{ width: group.values.length * cell }} key={group.key}>{group.title}</div>)}{statColumns.map(([key,label,width]) => <div className="trend-stat-head" style={{ width, height: headerHeight }} key={key}>{label}</div>)}</div>
+      <div className="trend-number-head" style={{ left: groupStart, width: totalCells * cell, height: headerHeight - 32 }}>{groups.flatMap(group => group.values.map(value => <div style={{ width: cell }} key={`${group.key}-${value}`}>{value}</div>))}</div>
       {(plainNumberMode ? hasPlainLineSegments : showLines) && <svg className="trend-lines" data-line-renderer={plainNumberMode ? 'position-tracks' : 'segments-v3'} preserveAspectRatio="none" style={{ left:groupStart, top:headerHeight, width:totalCells * cell, height:rows.length * rowHeight }} width={totalCells * cell} height={rows.length * rowHeight} viewBox={`0 0 ${totalCells * cell} ${rows.length * rowHeight}`} aria-hidden="true">{lines.flatMap((line,lineIndex) => (plainNumberMode ? line.positionTrack : !line.distribution && (game !== 'ssq' || line.accent)) ? line.segments.map((segment,segmentIndex) => { const visible = plainNumberMode ? trimTrendSegment(segment) : segment; return <line data-from-row={segmentIndex} data-to-row={segmentIndex + 1} key={`${lineIndex}-${segmentIndex}`} x1={visible.from.x} y1={visible.from.y} x2={visible.to.x} y2={visible.to.y} stroke={line.color} strokeWidth={plainNumberMode ? '1.45' : '1.6'} strokeLinecap="round" opacity={plainNumberMode ? '.68' : '.85'}/> }) : [])}</svg>}
       {groupBoundaries.map((left, index) => <span className="trend-group-divider" style={{ left, height:canvasHeight }} key={index}/>) }
-      <div className="trend-body" style={{ top: headerHeight }}>
-        {rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}>
-          <div className="trend-issue" style={{ width: issueWidth }}>{record.issue}</div>
-          {numberStyle === 'plain' && <div className="trend-draw-number" style={{ width:plainDrawWidth, height:rowHeight }} title={formatTrendDrawNumber(record)}>{formatTrendDrawNumber(record)}</div>}
-          {rowGroups.flatMap((group, groupIndex) => group.values.map(cellData => {
-            const distributionType = cellData.hitCount >= 3 ? 'distribution-triple' : cellData.hitCount === 2 ? 'distribution-repeat' : 'distribution-single'
-            const distributionLabel = cellData.hitCount >= 3 ? '豹子' : cellData.hitCount === 2 ? '重号' : '无重号'
-            const distributionClass = numberStyle === 'plain' ? distributionType : (cellData.hitCount > 1 ? 'repeat-hit' : '')
-            return <div className={`trend-cell ${cellData.hit ? `hit ${groups[groupIndex].accent ? 'hit-blue' : ''} ${cellData.patternHit ? 'pattern-hit' : ''} ${groups[groupIndex].distribution ? `distribution-hit ${distributionClass}` : ''}` : ''}`} title={numberStyle === 'plain' && cellData.hit && groups[groupIndex].distribution ? `${cellData.value}：${distributionLabel}` : undefined} aria-label={numberStyle === 'plain' && cellData.hit && groups[groupIndex].distribution ? `号码 ${cellData.value}，${distributionLabel}` : undefined} style={{ width: cell, height: rowHeight }} key={`${record.id}-${groupIndex}-${cellData.value}`}>
-              {cellData.hit ? <b>{cellData.value}{numberStyle === 'ball' && groups[groupIndex].distribution && cellData.hitCount > 1 && <i>{cellData.hitCount}</i>}</b> : <span>{showMisses && numberStyle === 'ball' ? cellData.miss : ''}</span>}
-            </div>
-          }))}
-          {statColumns.map(([key,,width]) => <div className="trend-stat" style={{ width, height: rowHeight }} key={`${record.id}-${key}`}><span>{stats[key]}</span></div>)}
-        </div>)}
-        {numberStyle === 'ball' && <>
-          <div className="trend-simulator" style={{ width:tableWidth }}><div className="trend-simulator-label" style={{ width:issueWidth }}>模拟选号</div>{groups.flatMap(group => group.values.map(value => group.distribution ? <span className="sim-placeholder" style={{ width:cell }} key={`${group.key}-${value}`}/> : <button className={(simulation[group.key] || []).includes(value) ? 'selected' : ''} style={{ width:cell }} onClick={() => chooseSimulation(group,value)} key={`${group.key}-${value}`}>{value}</button>))}<span style={{ width:statWidth }}/></div>
-          {summaryRows.map(summary => <div className="trend-summary-row" style={{ height:30 }} key={summary.key}><div className="trend-summary-label" style={{ width:issueWidth }}>{summary.label}</div>{summary.groups.flatMap((values, groupIndex) => values.map((value, valueIndex) => <div className="trend-summary-cell" style={{ width:cell }} key={`${summary.key}-${groupIndex}-${valueIndex}`}>{value}</div>))}<div className="trend-summary-spacer" style={{ width:statWidth }}/></div>)}
-        </>}
-      </div>
+      <div className="trend-body" style={{ top: headerHeight }}>{rowData.map(({ record, groups: rowGroups, stats }) => <div className="trend-table-row" style={{ height: rowHeight }} key={record.id}><div className="trend-issue" style={{ width: issueWidth }}>{record.issue}</div>{numberStyle === 'plain' && showPlainDrawColumn && <div className="trend-draw-number" style={{ width:plainDrawWidth, height:rowHeight }} title={formatTrendDrawNumber(record)}>{formatTrendDrawNumber(record)}</div>}{rowGroups.flatMap((group, groupIndex) => group.values.map(cellData => { const distributionType = cellData.hitCount >= 3 ? 'distribution-triple' : cellData.hitCount === 2 ? 'distribution-repeat' : 'distribution-single'; const distributionLabel = cellData.hitCount >= 3 ? '豹子' : cellData.hitCount === 2 ? '重号' : '无重号'; return <div className={`trend-cell ${cellData.hit ? `hit ${groups[groupIndex].accent ? 'hit-blue' : ''} ${cellData.patternHit ? 'pattern-hit' : ''} ${groups[groupIndex].distribution ? `distribution-hit ${distributionType}` : ''}` : ''}`} title={cellData.hit && groups[groupIndex].distribution ? `${cellData.value}：${distributionLabel}` : cellData.patternHit ? `三连号：${cellData.value}` : undefined} aria-label={cellData.hit && groups[groupIndex].distribution ? `号码 ${cellData.value}，${distributionLabel}` : cellData.patternHit ? `号码 ${cellData.value}，三连号` : undefined} style={{ width: cell, height: rowHeight }} key={`${record.id}-${groupIndex}-${cellData.value}`}>{cellData.hit ? <b>{cellData.value}</b> : <span>{showMisses && numberStyle === 'ball' ? cellData.miss : ''}</span>}</div> }))}{statColumns.map(([key,,width]) => <div className={`trend-stat ${key === 'shape' ? `shape-${stats[key] === '豹子' ? 'baozi' : stats[key] === '组三' ? 'group3' : 'group6'}` : ''}`} style={{ width, height: rowHeight }} key={`${record.id}-${key}`}><span>{stats[key]}</span></div>)}</div>)}{numberStyle === 'ball' && <><div className="trend-simulator" style={{ width:tableWidth }}><div className="trend-simulator-label" style={{ width:issueWidth }}>模拟选号</div>{groups.flatMap(group => group.values.map(value => group.distribution ? <span className="sim-placeholder" style={{ width:cell }} key={`${group.key}-${value}`}/> : <button className={(simulation[group.key] || []).includes(value) ? 'selected' : ''} style={{ width:cell }} onClick={() => chooseSimulation(group,value)} key={`${group.key}-${value}`}>{value}</button>))}<span style={{ width:statWidth }}/></div>{visibleSummaryRows.map(summary => <div className="trend-summary-row" style={{ height:30 }} key={summary.key}><div className="trend-summary-label" style={{ width:issueWidth }}>{summary.label}</div>{summary.groups.flatMap((values, groupIndex) => values.map((value, valueIndex) => <div className="trend-summary-cell" style={{ width:cell }} key={`${summary.key}-${groupIndex}-${valueIndex}`}>{value}</div>))}<div className="trend-summary-spacer" style={{ width:statWidth }}/></div>)}</>}</div>
       </> : <TrendModeTable game={game} rows={rows} mode={trendMode}/>}
     </div></div>
     {trendMode === 'basic' && numberStyle === 'ball' && <div className="simulation-footer"><span>已选 <b>{selectedTotal}</b> 个，共 <b>{bets}</b> 注</span><label><input type="number" min="1" max="99" value={multiplier} onChange={event => setMultiplier(Math.max(1, Math.min(99, Number(event.target.value) || 1)))}/> 倍</label><strong>{bets * multiplier * 2} 元</strong><button onClick={() => setSimulation({})}>清空选号</button><button className="save-simulation" disabled={!bets} onClick={saveSimulation}>保存方案</button></div>}

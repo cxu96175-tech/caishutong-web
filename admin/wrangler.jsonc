@@ -1,0 +1,23 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "caishutong-admin",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-08-22",
+  "vars": {
+    "ADMIN_EMAIL": "1226779246@qq.com"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "ADMIN_ACTIVITY",
+      "id": "c4e103a85806447f9cf7fba92b1535e5"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "caishutong-analytics",
+      "database_id": "e133bbbc-902d-4b37-8464-a086524e8f66",
+      "migrations_dir": "./migrations"
+    }
+  ]
+}

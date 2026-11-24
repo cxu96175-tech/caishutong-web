@@ -7,11 +7,12 @@ export async function onRequestPost({ request, env, waitUntil }) {
   const visitorId = clean(payload.visitorId,64)
   const sessionId = clean(payload.sessionId,64)
   const eventName = clean(payload.event,40)
+  const userId = clean(payload.userId,96)
   if (!visitorId || !sessionId || !eventName) return Response.json({ error:'缺少统计字段' }, { status:400 })
   const userAgent = request.headers.get('User-Agent') || ''
   const device = /Mobile|Android|iPhone|iPad/i.test(userAgent) ? 'mobile' : 'desktop'
-  const query = env.DB.prepare('INSERT INTO analytics_events (visitor_id, session_id, event_name, page_name, game_name, device_type) VALUES (?, ?, ?, ?, ?, ?)')
-    .bind(visitorId,sessionId,eventName,clean(payload.page),clean(payload.game),device)
+  const query = env.DB.prepare('INSERT INTO analytics_events (visitor_id, session_id, user_id, event_name, page_name, game_name, device_type) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(visitorId,sessionId,userId,eventName,clean(payload.page),clean(payload.game),device)
   waitUntil(query.run())
   return new Response(null,{ status:204, headers:{ 'Cache-Control':'no-store' } })
 }

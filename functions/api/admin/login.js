@@ -1,4 +1,5 @@
 import { adminCookie,clientKey,createAdminToken,passwordMatches } from '../../_lib/adminAuth.js'
+import { recordAdminActivity } from '../../_lib/adminActivity.js'
 
 const json = (body,status = 200,headers = {}) => Response.json(body,{ status,headers:{ 'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff',...headers } })
 
@@ -19,5 +20,6 @@ export async function onRequestPost({ request,env }) {
   }
   await env.DB.prepare('DELETE FROM admin_login_attempts WHERE attempt_key=?').bind(key).run()
   const token = await createAdminToken(email,env)
+  await recordAdminActivity({ request,env,adminEmail:email,event:'admin_login',page:'admin_login' })
   return json({ ok:true,email },200,{ 'Set-Cookie':adminCookie(token) })
 }
